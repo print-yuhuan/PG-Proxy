@@ -1,0 +1,255 @@
+{
+  "schema": 1,
+  "go_sdk": "go1.27.3",
+  "go_vendor_license_files": 10,
+  "cargo": {
+    "lock_sha256": "ac24753c2ed315f8dc22d6470fa868970e3705a0888d879704e872d53f21452d",
+    "packages_collected": [
+      "ahash-0.8.12",
+      "aho-corasick-1.1.3",
+      "autocfg-1.3.0",
+      "base64-0.23.1",
+      "bitvec-1.0.1",
+      "cfg-if-1.0.0",
+      "displaydoc-0.2.5",
+      "enum_dispatch-0.3.13",
+      "foldhash-0.2.0",
+      "form_urlencoded-1.2.2",
+      "funty-2.0.0",
+      "getrandom-0.3.3",
+      "hashbrown-0.17.1",
+      "heck-0.5.0",
+      "hex-0.4.3",
+      "icu_collections-1.5.0",
+      "icu_locid-1.5.0",
+      "icu_locid_transform-1.5.0",
+      "icu_locid_transform_data-1.5.0",
+      "icu_normalizer-1.5.0",
+      "icu_normalizer_data-1.5.0",
+      "icu_properties-1.5.1",
+      "icu_properties_data-1.5.0",
+      "icu_provider-1.5.0",
+      "icu_provider_macros-1.5.0",
+      "idna-1.1.0",
+      "idna_adapter-1.2.0",
+      "itoa-1.0.11",
+      "jiter-0.16.0",
+      "lexical-parse-float-1.0.5",
+      "lexical-parse-integer-1.0.5",
+      "lexical-util-1.0.6",
+      "libc-0.2.185",
+      "litemap-0.7.3",
+      "lru-0.18.5",
+      "memchr-2.7.4",
+      "num-bigint-0.4.6",
+      "num-integer-0.1.46",
+      "num-traits-0.2.19",
+      "once_cell-1.21.3",
+      "percent-encoding-2.3.2",
+      "proc-macro2-1.0.107",
+      "pydantic-core-2.50.1",
+      "pyo3-0.29.2",
+      "pyo3-build-config-0.29.2",
+      "pyo3-ffi-0.29.2",
+      "pyo3-macros-0.29.2",
+      "pyo3-macros-backend-0.29.2",
+      "quote-1.0.44",
+      "radium-0.7.0",
+      "regex-1.13.1",
+      "regex-automata-0.4.18",
+      "regex-syntax-0.8.11",
+      "serde-1.0.229",
+      "serde_core-1.0.229",
+      "serde_derive-1.0.229",
+      "serde_json-1.0.151",
+      "smallvec-1.16.2",
+      "speedate-0.17.0",
+      "stable_deref_trait-1.2.0",
+      "static_assertions-1.1.0",
+      "strum-0.27.2",
+      "strum_macros-0.27.2",
+      "syn-2.0.82",
+      "syn-3.0.6",
+      "synstructure-0.13.1",
+      "tap-1.0.1",
+      "target-lexicon-0.13.4",
+      "tinystr-0.7.6",
+      "unicode-ident-1.0.12",
+      "url-2.5.8",
+      "utf16_iter-1.0.5",
+      "utf8_iter-1.0.4",
+      "uuid-1.23.4",
+      "version_check-0.9.5",
+      "write16-1.0.0",
+      "writeable-0.5.5",
+      "wyz-0.5.1",
+      "yoke-0.7.4",
+      "yoke-derive-0.7.4",
+      "zerocopy-0.8.25",
+      "zerofrom-0.1.4",
+      "zerofrom-derive-0.1.4",
+      "zerovec-0.10.4",
+      "zerovec-derive-0.10.3",
+      "zmij-1.0.6"
+    ],
+    "lock_packages_not_in_local_cache": [
+      "bitflags-2.9.1",
+      "bumpalo-3.19.0",
+      "js-sys-0.3.77",
+      "log-0.4.27",
+      "portable-atomic-1.6.0",
+      "r-efi-5.2.0",
+      "wasi-0.14.2+wasi-0.2.4",
+      "wasm-bindgen-0.2.100",
+      "wasm-bindgen-backend-0.2.100",
+      "wasm-bindgen-macro-0.2.100",
+      "wasm-bindgen-macro-support-0.2.100",
+      "wasm-bindgen-shared-0.2.100",
+      "wit-bindgen-rt-0.39.0",
+      "zerocopy-derive-0.8.25"
+    ]
+  },
+  "rust_stdlib_toolchain": "1.99.1",
+  "assets": [
+    {
+      "path": "Chaquopy-LICENSE.txt",
+      "bytes": 1076,
+      "sha256": "345a9fdfeed355d37b18569ef277ba56eb0ab7c0b17a08a90163ce8d33d2b862"
+    },
+    {
+      "path": "CPython-LICENSE.txt",
+      "bytes": 13804,
+      "sha256": "b0e25a78cffb43f4d92de8b61ccfa1f1f98ecbc22330b54b5251e7b6ba010231"
+    },
+    {
+      "path": "gecko/Mozilla-license.html",
+      "bytes": 263355,
+      "sha256": "594b1d3804890eac159a3d960bf6d3836a69f5112e27123379690b459c76fabd"
+    },
+    {
+      "path": "gecko/NOTICE.txt",
+      "bytes": 1020,
+      "sha256": "eab41772de0a61e4c505a4a2b5aabc727c65796eb0b862dbd732eeceda630f40"
+    },
+    {
+      "path": "gecko/pdfjs/LICENSE",
+      "bytes": 2080,
+      "sha256": "aa92ab5a472974865a96fd4a4e9c13bb41bf6fe1b309cb6b8da48bc9e19839a2"
+    },
+    {
+      "path": "gecko/pdfjs/LICENSE_FOXIT",
+      "bytes": 1553,
+      "sha256": "b578cdd2345840ada550bd12519533812320d5f1d21cf4c1c7e1b1b0a31c98b7"
+    },
+    {
+      "path": "gecko/pdfjs/LICENSE_LIBERATION",
+      "bytes": 22154,
+      "sha256": "d2c4d5b3e115a519cb58eb691aa64538397e2611f9ebe801392cf9667997e7dc"
+    },
+    {
+      "path": "gecko/source.json",
+      "bytes": 779,
+      "sha256": "e4bfb8ea7265587512a3c8704de8106ae30f69476cc3c1270a7697ecf31a6f75"
+    },
+    {
+      "path": "go/Go-LICENSE.txt",
+      "bytes": 1453,
+      "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+    },
+    {
+      "path": "go/Go-PATENTS.txt",
+      "bytes": 1303,
+      "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+    },
+    {
+      "path": "go/vendor-notices.txt",
+      "bytes": 36198,
+      "sha256": "39024dca3f0cda3f05040412e1b03dec27a4b11a18839e9cb8b18bba40b61e3a"
+    },
+    {
+      "path": "project/AIStudio2API-LICENSE.txt",
+      "bytes": 1066,
+      "sha256": "cca76be3b407663a238f51fa8d7740ef8be53fa2d18a99c27d7997c9c0a801e4"
+    },
+    {
+      "path": "project/LICENSE.txt",
+      "bytes": 1121,
+      "sha256": "b2fc9865d6cde7421939b9f2a903e776de6fd2a200c61f1353217230b372ec21"
+    },
+    {
+      "path": "project/NOTICE.txt",
+      "bytes": 3675,
+      "sha256": "0f5b1a7423bef76bc5e0e0921c947576da90c2ceb69b7fbe16b35de081c25949"
+    },
+    {
+      "path": "rust/crate-notices.txt",
+      "bytes": 761532,
+      "sha256": "8c0f5010b6e4fda5f2edc9e7d15725fd3dad88e43a4fc763fbe13a9365a78c6a"
+    },
+    {
+      "path": "rust/stdlib/COPYRIGHT-library.html",
+      "bytes": 1499465,
+      "sha256": "5647be074c8edf7339fd863055923a8fc80bc5610a8d4661ec3b767b9d392c27"
+    },
+    {
+      "path": "rust/stdlib/licenses/Apache-2.0.txt",
+      "bytes": 10280,
+      "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
+    },
+    {
+      "path": "rust/stdlib/licenses/BSD-2-Clause.txt",
+      "bytes": 1267,
+      "sha256": "f32fb3b417a194167cfad068223fc975ba96c5960513a10f66a3c28720aec1df"
+    },
+    {
+      "path": "rust/stdlib/licenses/CC-BY-SA-4.0.txt",
+      "bytes": 20137,
+      "sha256": "23ee78c8bae49cf08ea2f0c84945c66b987ebe4520881fb51b3dad4fb43d07c2"
+    },
+    {
+      "path": "rust/stdlib/licenses/GCC-exception-3.1.txt",
+      "bytes": 3320,
+      "sha256": "a3966c9410ef94a1efbfa9ec04e9c1994026a70623fbf0885ce36737bfba3b54"
+    },
+    {
+      "path": "rust/stdlib/licenses/GPL-2.0-only.txt",
+      "bytes": 17642,
+      "sha256": "54b212ba1f97f6948fa5486239ab505dd820b02e50cbfd296b4062c8609a70af"
+    },
+    {
+      "path": "rust/stdlib/licenses/GPL-3.0-or-later.txt",
+      "bytes": 34795,
+      "sha256": "05315fce6c35f79b8a35454828995fa26336f235895ac64557abc028f4ffcea2"
+    },
+    {
+      "path": "rust/stdlib/licenses/ISC.txt",
+      "bytes": 730,
+      "sha256": "0ff61769b238634e042ab759dddfd104a8e69d091e3600ae3410e401a6164381"
+    },
+    {
+      "path": "rust/stdlib/licenses/LLVM-exception.txt",
+      "bytes": 919,
+      "sha256": "e34c58338bd89d43e709e226610d8f32b3e3c47f4ad9a99a8dc1d4ac7842488e"
+    },
+    {
+      "path": "rust/stdlib/licenses/MIT.txt",
+      "bytes": 1078,
+      "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+    },
+    {
+      "path": "rust/stdlib/licenses/NCSA.txt",
+      "bytes": 1676,
+      "sha256": "39cb0234065c92b9e6cee3830cbb52b1aa289aa8fe9ba2e66730fec5cf05c630"
+    },
+    {
+      "path": "rust/stdlib/licenses/OFL-1.1.txt",
+      "bytes": 4016,
+      "sha256": "8eea8287e5876b539670cadb82e99f9a7afddec6f6730811be1daf25d2e9bcfd"
+    },
+    {
+      "path": "rust/stdlib/licenses/Unicode-3.0.txt",
+      "bytes": 1995,
+      "sha256": "f5062c9a188d81dfe66b56db4182dcf9e4b17c0d9b0d311a8e20b3a1b075c443"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+PG Proxy — Mozilla GeckoView browser engine
+
+This application redistributes the unmodified Mozilla GeckoView engine:
+org.mozilla.geckoview:geckoview:159.0.20261022150525
+
+Mozilla Public License 2.0 and the upstream third-party licenses apply.
+MPL 2.0: https://www.mozilla.org/MPL/2.0/
+Matching source code for this exact engine build:
+https://hg.mozilla.org/releases/mozilla-release/rev/5add844c26613d7e4d84c799d6e23cf987b1240d
+
+Mozilla-license.html is copied from this engine's bundled
+chrome/toolkit/content/global/license.html in assets/omni.ja. It contains
+the full MPL 2.0 text and upstream third-party notices. The pdfjs directory
+retains the additional bundled character-map and font license files.
+The engine also exposes its notices at about:license.
+
+PG Proxy's Kotlin integration and session-bridge extension are separate
+application code; they do not modify GeckoView or Mozilla's source files.
+Mozilla and Firefox trademarks belong to their respective owners.
+PG Proxy is not an official Mozilla product.

@@ -1,0 +1,59 @@
+# github.com/Mag1cFall/goja v0.0.0-firefox.1
+## explicit; go 1.25.0
+github.com/Mag1cFall/goja
+github.com/Mag1cFall/goja/ast
+github.com/Mag1cFall/goja/file
+github.com/Mag1cFall/goja/ftoa
+github.com/Mag1cFall/goja/ftoa/internal/fast
+github.com/Mag1cFall/goja/parser
+github.com/Mag1cFall/goja/token
+github.com/Mag1cFall/goja/unistring
+# github.com/bits-and-blooms/bitset v1.20.0
+## explicit; go 1.16
+github.com/bits-and-blooms/bitset
+# github.com/dlclark/regexp2/v2 v2.5.2
+## explicit; go 1.25
+github.com/dlclark/regexp2/v2
+github.com/dlclark/regexp2/v2/helpers
+github.com/dlclark/regexp2/v2/syntax
+# github.com/go-sourcemap/sourcemap v2.1.3+incompatible
+## explicit
+github.com/go-sourcemap/sourcemap
+github.com/go-sourcemap/sourcemap/internal/base64vlq
+# github.com/google/pprof v0.0.0-20230207041349-798e818bf904
+## explicit; go 1.19
+github.com/google/pprof/profile
+# github.com/nlnwa/whatwg-url v0.6.2
+## explicit; go 1.27
+github.com/nlnwa/whatwg-url/errors
+github.com/nlnwa/whatwg-url/url
+# golang.org/x/net v0.34.0
+## explicit; go 1.18
+golang.org/x/net/idna
+# golang.org/x/text v0.42.0
+## explicit; go 1.26.0
+golang.org/x/text/cases
+golang.org/x/text/collate
+golang.org/x/text/encoding
+golang.org/x/text/encoding/charmap
+golang.org/x/text/encoding/htmlindex
+golang.org/x/text/encoding/internal
+golang.org/x/text/encoding/internal/identifier
+golang.org/x/text/encoding/japanese
+golang.org/x/text/encoding/korean
+golang.org/x/text/encoding/simplifiedchinese
+golang.org/x/text/encoding/traditionalchinese
+golang.org/x/text/encoding/unicode
+golang.org/x/text/internal
+golang.org/x/text/internal/colltab
+golang.org/x/text/internal/language
+golang.org/x/text/internal/language/compact
+golang.org/x/text/internal/tag
+golang.org/x/text/internal/utf8internal
+golang.org/x/text/language
+golang.org/x/text/runes
+golang.org/x/text/secure/bidirule
+golang.org/x/text/transform
+golang.org/x/text/unicode/bidi
+golang.org/x/text/unicode/norm
+golang.org/x/text/unicode/rangetable

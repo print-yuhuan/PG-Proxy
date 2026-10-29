@@ -1,0 +1,69 @@
+PG Proxy
+Copyright (c) 2025 欤歡
+Copyright (c) 2026 print-yuhuan and PG Proxy contributors
+
+PG Proxy's own code is licensed under MIT; see LICENSE. Third-party components
+retain their own copyright notices and license terms. This notice does not
+relicense those components or grant rights to third-party trademarks or logos.
+
+ADAPTED IMPLEMENTATION
+
+Playground JSON/protobuf field mappings, Google session signatures, WAA challenge
+decoding, experiments-state handling and lifecycle calls in backend/pgproxy/waa.py,
+playground_protocol.py, playground_client.py and session.py include adaptations
+of the AIStudio2API implementation:
+https://github.com/Mag1cFall/AIStudio2API
+Reference revision: 7cb5cc04676751b588146052475deec147fee35e
+Copyright (c) 2026 Mag1cFall
+Licensed under MIT; see THIRD_PARTY_LICENSE_AIStudio2API.txt.
+
+runtime/waa is adapted from internal/waa of that same AIStudio2API revision,
+including its Firefox JavaScript host. This is adapted implementation code,
+not merely a design reference. runtime/main.go provides the local pipe adapter.
+PG Proxy does not run, require, or connect to an AIStudio2API backend service.
+The helper has no HTTP listener; Python manages accounts, requests and streaming.
+runtime/vendor contains the Goja fork and other dependencies with their original
+licenses. Preserve all vendor license, copyright and attribution files.
+
+RUNTIME AND INTERFACE COMPONENTS
+
+AndroidX/Compose, Chaquopy, CPython, FastAPI, Uvicorn, HTTPX, Pydantic, Go, Rust
+and their dependencies retain their respective licenses. See requirements-lock.txt,
+runtime/go.mod, runtime/vendor and app/src/main/assets/third_party. Python wheel
+license metadata is retained in the application packages. Do not treat all
+dependencies as MIT; for example, certifi is covered by MPL 2.0.
+
+The login browser uses unmodified Mozilla GeckoView under MPL 2.0 and its bundled
+third-party licenses. The exact source revision, corresponding-source URL and
+complete notices are in app/src/main/assets/third_party/gecko. PG Proxy's Kotlin
+integration and session-bridge extension do not modify Mozilla engine sources.
+
+DESIGN AND PUBLIC NETWORK SERVICES
+
+Interface information hierarchy and card styling, and public IP lookup services,
+were researched in FlClash: https://github.com/chen08209/FlClash
+Reference revision: 7fd417fb9a9a277c6a9339a8ac87f907df7c25f7
+Reference files: lib/common/service_probe.dart, lib/common/ip_quality.dart,
+lib/models/common.dart, lib/models/ip_quality.dart and the dashboard widgets.
+PG Proxy's Compose interface and Python lookup client are independently
+implemented; no FlClash source code or assets are bundled. Service URLs and
+data semantics are documented in docs/NETWORK_INFO.md.
+
+ICON AND TRADEMARKS
+
+The launcher icon was redrawn as an Android vector, using a Labs-inspired flask
+from a user-provided visual reference and a Gemini star outline from the
+user-provided google-gemini.svg. The star is now a transparent cutout.
+An independent license for the supplied reference artwork was not verified.
+Do not infer a Google trademark or logo permission from this project's MIT
+license. Google, Google Labs, Gemini, Mozilla and Firefox names and marks remain
+the property of their respective owners. PG Proxy is not an official Google
+or Mozilla product and is not endorsed by them.
+
+DISTRIBUTION
+
+The standard MIT license governs distribution of PG Proxy's own code without
+additional distribution-channel restrictions. Third-party components retain
+their respective terms. Binary distributions preserve license notices and
+corresponding-source information where required by those licenses.
+See docs/SOURCES.md and docs/MAINTENANCE.md.

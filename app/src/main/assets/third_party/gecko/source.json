@@ -1,0 +1,14 @@
+{
+  "coordinate": "org.mozilla.geckoview:geckoview:159.0.20261022150525",
+  "revision": "5add844c26613d7e4d84c799d6e23cf987b1240d",
+  "source": "https://hg.mozilla.org/releases/mozilla-release/rev/5add844c26613d7e4d84c799d6e23cf987b1240d",
+  "aar_sha256": "11f0dd1b030370e29e47030d1269943361f751c5220aff24dca3232e36646c90",
+  "omni_sha256": "38fad169a65d064137bda9c9ff3a9099ec548b36781b9feb6d27e5fa4336c21b",
+  "notice_sources": {
+    "chrome/toolkit/content/global/license.html": "Mozilla-license.html",
+    "chrome/pdfjs/content/web/cmaps/LICENSE": "pdfjs/LICENSE",
+    "chrome/pdfjs/content/web/standard_fonts/LICENSE_FOXIT": "pdfjs/LICENSE_FOXIT",
+    "chrome/pdfjs/content/web/standard_fonts/LICENSE_LIBERATION": "pdfjs/LICENSE_LIBERATION"
+  },
+  "engine_modified": false
+}
