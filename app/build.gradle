@@ -19,8 +19,31 @@ def validateReleaseSigningEnvironment = tasks.register('validateReleaseSigningEn
         if (!missing.isEmpty()) throw new GradleException('Release signing requires environment variables: ' + missing.join(', '))
         def keyStore = new File(releaseSigningValues.storeFile)
         def resolved = keyStore.canonicalFile.toPath()
-        if (!keyStore.isAbsolute() || !keyStore.isFile() || resolved.startsWith(rootProject.projectDir.canonicalFile.toPath())) {
-            throw new GradleException('Release keystore must be an existing absolute path outside the repository')
+        if (!keyStore.isAbsolute() || !keyStore.isFile()) {
+            throw new GradleException('Release keystore must be an existing absolute path outside the repository or in ignored signing/')
+        }
+        def checkout = rootProject.projectDir.canonicalFile.toPath()
+        def gitExit = { List<String> arguments ->
+            try {
+                def process = new ProcessBuilder(['git'] + arguments).directory(rootProject.projectDir).redirectErrorStream(true).start()
+                process.inputStream.readAllBytes()
+                return process.waitFor()
+            } catch (IOException ignored) {
+                throw new GradleException('Cannot verify that the local signing keystore is ignored and untracked')
+            }
+        }
+        [keyStore.absoluteFile.toPath(), resolved].toSet().each { candidate ->
+            if (candidate.startsWith(checkout)) {
+                def relative = checkout.relativize(candidate)
+                if (relative.nameCount == 0 || relative.getName(0).toString() != 'signing') {
+                    throw new GradleException('Release keystore must be outside the repository or in ignored signing/')
+                }
+                def path = relative.toString().replace('\\', '/')
+                if (gitExit(['check-ignore', '--no-index', '--quiet', '--', path]) != 0 ||
+                    gitExit(['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', path]) != 1) {
+                    throw new GradleException('Repository signing keystore must be Git-ignored and untracked')
+                }
+            }
         }
     }
 }

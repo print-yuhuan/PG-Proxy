@@ -37,7 +37,7 @@ Windows 还需要安装 Visual Studio 或 Build Tools 的 **“使用 C++ 的桌
 
 ## 2. 从源码完整构建
 
-先取得本仓库源码，在仓库根目录执行。以下示例使用 `D:\PG-Proxy`，路径可自行调整；不要把本机凭证、签名材料或导出的浏览器会话放入源码目录。
+先取得本仓库源码，在仓库根目录执行。以下示例使用 `D:\PG-Proxy`，路径可自行调整。本机凭证、签名材料和导出的浏览器会话不得进入受跟踪源码；本地签名目录的放置和忽略要求见第 3 节。
 
 ```powershell
 cd D:\PG-Proxy
@@ -106,24 +106,35 @@ adb -s emulator-5556 shell am start -n dev.pgproxy.app/.MainActivity
 
 ### 正式签名准备
 
-将签名密钥库放在**仓库外**的受控目录，通过以下环境变量提供配置。密码不能写进源码、命令历史、日志或公开发布材料。
+签名密钥库可以放在仓库外受控目录，也可以放在本项目的 **`signing/` 本地目录**。使用仓库内目录时，必须同时满足 Git 忽略和未受跟踪两个条件；密钥库、私有 `signing.json` 及整个目录均不能提交或上传。通过以下环境变量为构建脚本提供配置，密码不能写进源码、命令历史、日志或公开发布材料。
 
 | 环境变量 | 内容 |
 | --- | --- |
-| `PG_SIGNING_STORE_FILE` | 仓库外的签名密钥库绝对路径 |
+| `PG_SIGNING_STORE_FILE` | 仓库外受控目录，或已忽略且未受跟踪的 `signing/` 中的密钥库绝对路径 |
 | `PG_SIGNING_STORE_PASSWORD` | 密钥库密码 |
 | `PG_SIGNING_KEY_ALIAS` | 发布密钥别名 |
 | `PG_SIGNING_KEY_PASSWORD` | 发布密钥密码 |
 
-已有正式签名时继续使用原密钥，不要每次发布都新建。首次自行生成密钥，可用 JDK 的 `keytool` 交互输入密码，例如：
+本项目本地签名路径约定为 `D:\PG-Proxy\signing\pg-proxy-release.p12`，私有配置为同目录 `signing.json`。后者仅用于本机受控加载，不是要随源码创建或分享的示例文件；`tools/build_app.py` 仍通过上表环境变量读取签名配置。
+
+已有有效正式签名时继续使用原密钥，不要每次发布都新建。0.1.0 的签名材料已不可用，0.2.0 因此采用新签名；这一变更会阻止直接覆盖旧包，详见下文。首次自行生成密钥，可用 JDK 的 `keytool` 交互输入密码，例如：
 
 ```powershell
-keytool -genkeypair -keystore 'D:\PG-Proxy-signing\pg-proxy-release.p12' `
+keytool -genkeypair -keystore 'D:\PG-Proxy\signing\pg-proxy-release.p12' `
   -storetype PKCS12 -alias pgproxy-release -keyalg RSA -keysize 3072 `
   -validity 10000 -dname 'CN=PG Proxy'
 ```
 
-这是路径和身份的示例，不是维护者私钥的下载位置。先创建仓库外目录并设置合适的访问权限；若该密钥库已存在，不要覆盖它。密钥库及密码应妥善保管并单独留存恢复副本，它们决定今后能否为同一应用提供签名一致的更新。
+这是本机路径和身份的示例，不是维护者私钥的下载位置。先创建签名目录并设置合适的访问权限；若密钥库已存在，不要覆盖它。密钥库及密码应妥善保管并单独留存恢复副本，它们决定今后能否为同一应用提供签名一致的更新。Git 忽略规则不等于文件访问权限，也不能保护手工上传的归档。
+
+使用仓库内 `signing/` 时，在构建或提交前检查：
+
+```powershell
+git check-ignore -- signing/pg-proxy-release.p12 signing/signing.json
+git ls-files -- signing/
+```
+
+第一条应列出被忽略的路径，第二条应无输出。若任何签名材料已被跟踪，先停止发布并处理，不使用 `git add -f` 绕过忽略规则。不要在诊断输出中打印 `signing.json` 或密码。
 
 密码由本机密码管理器或受保护的构建环境临时注入；也可在 PowerShell 中交互读取，避免将密码字面量写进历史：
 
@@ -138,7 +149,7 @@ function Read-SigningPassword([string]$Prompt) {
   }
 }
 
-$env:PG_SIGNING_STORE_FILE = 'D:\PG-Proxy-signing\pg-proxy-release.p12'
+$env:PG_SIGNING_STORE_FILE = 'D:\PG-Proxy\signing\pg-proxy-release.p12'
 $env:PG_SIGNING_KEY_ALIAS = 'pgproxy-release'
 try {
   $env:PG_SIGNING_STORE_PASSWORD = Read-SigningPassword '密钥库密码'
@@ -158,11 +169,19 @@ ARM64 Release 输出为 `artifacts/PG-Proxy-0.2.0-arm64-v8a-release.apk` 和 `ar
 
 ### 安装与后续更新
 
-后续正式版本应保持包名和签名身份一致。不同电脑的 Debug 签名、自行生成的签名与维护者发布签名可能不同，覆盖安装前应先核对。卸载或清除应用数据会删除私有配置与登录资料；遇到签名冲突时，先确认程序来源和数据保留需求。
+**0.2.0 使用新正式签名，不能直接覆盖旧 0.1.0 签名包。** 原签名材料已不可用，本次无法维持旧包的签名身份。需要升级时，先记录端口、访问范围等必要设置，再卸载旧版、安装 0.2.0 并重新登录添加凭证。卸载会删除应用私有配置、凭证和浏览器会话；清除应用数据同样会删除这些资料，且仅清数据不能解决签名冲突。
 
-项目没有内置自动更新。不要提交 `*.jks`、`*.keystore`、`*.p12`、签名密码或包含这些材料的归档；公开材料仅提供签名证书指纹。
+从这份新密钥开始，后续正式版本应保持包名和签名身份一致。不同电脑的 Debug 签名、自行生成的签名与维护者发布签名可能不同，覆盖安装前仍需核对。
 
-已有正式签名记录中的公有证书 SHA-256 为：
+项目没有内置自动更新。不要提交 `signing/`、`signing.json`、`*.jks`、`*.keystore`、`*.p12`、签名密码或包含这些材料的归档；公开材料仅提供签名证书指纹。
+
+**0.2.0 新正式签名**的公有证书 SHA-256 为：
+
+```text
+e7c43a66f990d01ed2bdb9d967db5b1df905e3527c31fcabac37f46f6017b39d
+```
+
+**0.1.0 旧正式签名**的公有证书 SHA-256 为（仅供识别旧包，不是 0.2.0 的签名）：
 
 ```text
 1ffe41e58b792b58bb30c0d8349e0d6c06c3419e2379e149bb1c56ec75d972cf
@@ -286,7 +305,7 @@ git diff -- app/src/main/assets/third_party
 | 离线构建缺少 Gradle 或依赖 | 联网完整构建后再离线；不要删除 Wrapper 校验或改为跳过运行时检查 |
 | 下载哈希不匹配 | 停止使用该文件，核对官方来源和锁定版本；不要把未知下载文件的哈希直接写回脚本 |
 | `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | 比较签名证书；不要在不知情时清除用户数据 |
-| Release 提示缺少签名 | 检查四个 `PG_SIGNING_*` 环境变量、密钥库路径与别名；密钥库必须在仓库外，不使用调试签名代替 |
+| Release 提示缺少签名 | 检查四个 `PG_SIGNING_*` 环境变量、密钥库路径与别名；仓库内仅使用已忽略且未受跟踪的 `signing/`，不使用调试签名代替 |
 | APK 可安装但服务启动失败 | 检查对应 ABI、pydantic-core 导入和 WAA worker 探针；保留脱敏错误码，勿回退到假服务 |
 | 登录失败或生成 403 | 按 README 的网络地区、账户资格和会话排查步骤处理；不能仅凭一个状态码断定是 WAA 问题 |
 | 后台服务停止 | 查看通知、电池优化与厂商后台管理；按 [后台运行说明](BACKGROUND_RUN.md) 区分短时检查和长期运行证据 |
@@ -327,7 +346,7 @@ git diff -- app/src/main/assets/third_party
 
 ### 从最终提交构建 ARM64 Release
 
-按第 3 节加载仓库外的正式签名配置，再执行完整构建：
+按第 3 节加载受控本地目录中的正式签名配置，确认密钥和配置均未受 Git 跟踪，再执行完整构建：
 
 ```powershell
 git status --short

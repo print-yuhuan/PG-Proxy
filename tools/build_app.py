@@ -135,8 +135,24 @@ def release_signing_environment(env, root=ROOT):
     if missing:
         raise RuntimeError("Release signing requires environment variables: " + ", ".join(missing))
     store = Path(env["PG_SIGNING_STORE_FILE"]).expanduser()
-    if not store.is_absolute() or not store.is_file() or store.resolve().is_relative_to(root.resolve()):
-        raise RuntimeError("Release keystore must be an existing absolute path outside the repository")
+    if not store.is_absolute() or not store.is_file():
+        raise RuntimeError("Release keystore must be an existing absolute path outside the repository or in ignored signing/")
+    checkout = root.resolve()
+    for candidate in {store.absolute(), store.resolve()}:
+        if not candidate.is_relative_to(checkout):
+            continue
+        relative = candidate.relative_to(checkout)
+        if not relative.parts or relative.parts[0] != "signing":
+            raise RuntimeError("Release keystore must be outside the repository or in ignored signing/")
+        try:
+            ignored = subprocess.run(["git", "check-ignore", "--no-index", "--quiet", "--", relative.as_posix()],
+                                     cwd=checkout, capture_output=True)
+            tracked = subprocess.run(["git", "--literal-pathspecs", "ls-files", "--error-unmatch", "--", relative.as_posix()],
+                                     cwd=checkout, capture_output=True)
+        except OSError:
+            raise RuntimeError("Cannot verify that the local signing keystore is ignored and untracked") from None
+        if ignored.returncode != 0 or tracked.returncode != 1:
+            raise RuntimeError("Repository signing keystore must be Git-ignored and untracked")
     return store.resolve()
 
 
@@ -608,7 +624,7 @@ def main():
               "build_invoked": not args.package_only,
               "workspace_revision_at_packaging": revision.stdout.strip() if revision.returncode == 0 else None,
               "workspace_dirty_at_packaging": bool(dirty.stdout.strip()) if dirty.returncode == 0 else None,
-              "signing": ("Verified release signing with an external keystore" if args.build_type == "release"
+              "signing": ("Verified release signing with a private local keystore" if args.build_type == "release"
                           else "Android debug signing; not a release distribution"), "artifacts": records}
     manifest = output / ("pg-proxy-release-apks.json" if args.build_type == "release" else "pg-proxy-apks.json")
     manifest.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
