@@ -11,6 +11,7 @@ import time
 import uuid
 from .playground_protocol import invalid
 from .errors import PlaygroundError
+from .openai_compat import normalize_openai_request
 
 
 def _object(value, allowed, label):
@@ -271,6 +272,7 @@ def _tools(request, native):
 
 
 def openai_request_to_gemini(request):
+    request = normalize_openai_request(request)
     supported = {'model', 'messages', 'stream', 'temperature', 'top_p', 'top_k', 'max_tokens', 'max_completion_tokens',
                  'stop', 'n', 'seed', 'response_format', 'stream_options', 'thinking_config', 'reasoning_effort',
                  'tools', 'tool_choice', 'parallel_tool_calls', 'modalities', 'image_config', 'speech_config', 'transcription_config', 'media_resolution'}

@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 import httpx
 from .config import Settings, ORIGIN, RPC_BASE
 from .errors import PlaygroundError
+from .gemini_compat import normalize_gemini_request, normalize_count_tokens_request
 from .session import GoogleSession
 from .waa import UnavailableWAA, WAA_URL, WAA_KEY, WAA_API_KEY, parse_challenge, load_interpreter
 from .playground_protocol import (loads, parse_models, encode_generate, iter_frames, decode_frame,
@@ -234,7 +235,7 @@ class PlaygroundClient:
             model = catalog[model_id]
             if 'countTokens' not in model.get('_upstream_methods', []):
                 raise PlaygroundError('This model does not support token counting',400,'unsupported_method')
-            wire = encode_count_tokens(model_id, request, model)
+            wire = encode_count_tokens(model_id, normalize_count_tokens_request(request, model), model)
             return decode_token_count(await self._rpc('CountTokens', wire, tier=True))
 
     async def _prepare_waa(self):
@@ -264,6 +265,7 @@ class PlaygroundClient:
             if model_id not in models:
                 raise PlaygroundError('Model is not in this account\'s supported Playground catalog',404,'model_not_found')
             model = models[model_id]
+            request = normalize_gemini_request(request, model)
             wire,binding,page_prompt = encode_generate(model_id,request,model,self.settings.timezone)
             continuable = 91 in model.get('_codes',[])
             total = request.get('generationConfig',{}).get('maxOutputTokens',model['outputTokenLimit'])

@@ -145,9 +145,9 @@ async def test_disconnect_before_body_closes_prepared_source(client_factory):
 
 
 @pytest.mark.parametrize('changes',[
-    {'n':True},{'n':1.0},{'stream':'true'},{'model':'models/'},{'model':[]},
-    {'tools':[{'type':{}}]},{'stream_options':[]},{'stream_options':{'include_usage':1}},
-    {'temperature':10**400},
+    {'model':'models/'},{'model':[]},
+    {'messages':[{'role':'unknown','content':'private-prompt'}]},
+    {'messages':[{'role':'user','content':17}]},
 ])
 def test_invalid_openai_types_are_controlled_without_generation(client_factory,changes):
     client,requests=client_factory()
@@ -159,18 +159,32 @@ def test_invalid_openai_types_are_controlled_without_generation(client_factory,c
 
 
 @pytest.mark.parametrize('changes',[
+    {'n':True},{'n':1.0},{'stream':'true'},
+    {'tools':[{'type':{}}]},{'stream_options':[]},{'stream_options':{'include_usage':1}},
+    {'temperature':10**400},
+])
+def test_optional_openai_controls_are_normalized_before_generation(client_factory,changes):
+    client,requests=client_factory()
+    body={'model':'test-chat','messages':[{'role':'user','content':'hello'}],**changes}
+    with TestClient(create_app(client)) as api:
+        response=api.post('/v1/chat/completions',headers=auth(client),json=body)
+    assert response.status_code==200
+    assert sum(r.url.path.endswith('/GenerateContent') for r in requests)==1
+
+
+@pytest.mark.parametrize('changes',[
     {'safetySettings':[{'category':[],'threshold':'OFF'}]},
     {'safetySettings':[{'category':'HARM_CATEGORY_HARASSMENT','threshold':{}}]},
     {'generationConfig':{'candidateCount':True}},
     {'generationConfig':{'topK':10**400}},
 ])
-def test_invalid_native_types_are_controlled_without_generation(client_factory,changes):
+def test_invalid_native_optional_settings_are_ignored_with_one_generation(client_factory,changes):
     client,requests=client_factory()
     body={'contents':[{'parts':[{'text':'private-prompt'}]}],**changes}
     with TestClient(create_app(client)) as api:
         response=api.post('/v1beta/models/test-chat:generateContent',headers=auth(client),json=body)
-    assert response.status_code==400 and 'private-prompt' not in response.text
-    assert not any(r.url.path.endswith('/GenerateContent') for r in requests)
+    assert response.status_code==200 and 'private-prompt' not in response.text
+    assert len([r for r in requests if r.url.path.endswith('/GenerateContent')]) == 1
 
 
 def test_error_messages_never_reflect_upstream_or_internal_exception_text(client_factory):

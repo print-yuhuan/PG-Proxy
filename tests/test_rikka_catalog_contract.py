@@ -189,8 +189,16 @@ def test_advertised_function_selection_excludes_unsupported_constraints():
     for mode in interface['tool_choice_modes']:
         assert accepts(entry, tools=[tool], tool_choice=mode)
     assert accepts(entry, tools=[tool], parallel_tool_calls=True)
-    assert not accepts(entry, tools=[tool], tool_choice='required')
-    assert not accepts(entry, tools=[tool], parallel_tool_calls=False)
+    # Compatibility accepts these hints without advertising their enforcement.
+    assert accepts(entry, tools=[tool], tool_choice='required')
+    assert accepts(entry, tools=[tool], parallel_tool_calls=False)
+    compatibility = public['pg_proxy']['proxy']['request_compatibility']
+    assert compatibility['unsupported_optional_parameters'] == 'ignore'
+    assert compatibility['forced_tool_choice_enforced'] is False
+    _, payload = openai_request_to_gemini({'model':entry['baseModelId'],
+        'messages':[{'role':'user','content':'Hello'}], 'tools':[tool],
+        'tool_choice':'required','parallel_tool_calls':False})
+    assert payload['toolConfig']['functionCallingConfig']['mode'] == 'AUTO'
 
 
 def test_modality_ads_distinguish_native_media_from_openai_extensions():

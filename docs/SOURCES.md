@@ -1,6 +1,6 @@
 # 来源、版权与许可
 
-本页记录 PG Proxy **0.1.0** 的代码来源、运行依赖、设计参考和许可边界。项目版本与依赖版本分别维护；完整声明随源码和安装包保留。
+本页记录 PG Proxy **0.2.0** 的代码来源、运行依赖、设计参考和许可边界。项目版本与依赖版本分别维护；完整声明随源码和安装包保留。
 
 ## 顶层许可证：MIT
 
@@ -55,6 +55,8 @@ WAA 执行真实下载的挑战程序并生成 proof；vendor 中的浏览器接
 - [Android-Node-Builder](https://github.com/print-yuhuan/Android-Node-Builder)：早期方案调研过 Android Node 运行时，**当前未使用 Node.js 或该项目的 libnode.so**。实际 WAA 引擎是 Goja，不要求下载该发布包。
 
 ## 模型能力资料来源
+
+客户端请求兼容另核对 Cherry Studio、RikkaHub、Kelivo、SillyTavern 的公开请求格式，固定提交、文件及核对范围见[客户端兼容来源](CLIENT_COMPATIBILITY.md#参考来源与测试范围)。仅以外部 JSON 行为编写独立适配与合同测试，未复制这些客户端的源码或资源，亦未将其作为运行依赖；相关项目仍适用各自许可证。
 
 实际模型 ID、方法、限额和能力码来自已登录会话的在线 `ListModels`。为避免猜测未明确解释的能力码，部分输入模态及统一上下文资料另参考 [Google AI Studio 模型文档](https://aistudio.google.com/docs/models)、[Gemini 模型说明](https://ai.google.dev/gemini-api/docs/models)与 [Gemma 4 模型卡](https://ai.google.dev/gemma/docs/core/model_card_4)，本轮核对日期为 **2026-10-30**。资料记录在 `model_catalog.py` 的补充元数据中，接口通过 `pg_proxy.upstream.modality_source` 返回具体页面、日期和解析后的模型目标。
 
