@@ -17,6 +17,34 @@ class GeckoProfilesTest {
     private fun id() = UUID.randomUUID().toString().replace("-", "")
 
     @Test
+    fun repeatedConfirmationAndSnapshotsDoNotRewriteTheRegisteredMarker() {
+        val accountId = id()
+        try {
+            val profile = GeckoProfiles.acquire(context, accountId).use { it.profile }
+            assertTrue(GeckoProfiles.markImportPending(context, accountId))
+            assertTrue(GeckoProfiles.confirmImport(context, accountId))
+            val marker = File(profile.parentFile, "registered")
+            assertTrue(marker.setLastModified(1_600_000_000_000L))
+            val before = android.system.Os.stat(marker.absolutePath)
+            val timestamp = marker.lastModified()
+            repeat(4) {
+                assertTrue(GeckoProfiles.confirmImport(context, accountId))
+                GeckoProfiles.reconcileImports(context, listOf(accountId))
+            }
+            assertEquals("Acknowledging unchanged state must not replace the file", before.st_ino,
+                android.system.Os.stat(marker.absolutePath).st_ino)
+            assertEquals("Acknowledging unchanged state must not write its contents", timestamp, marker.lastModified())
+            // A later real import still clears its journal without replacing the registered marker.
+            assertTrue(GeckoProfiles.markImportPending(context, accountId))
+            assertTrue(GeckoProfiles.confirmImport(context, accountId))
+            assertFalse(GeckoProfiles.isImportPending(context, accountId))
+            assertEquals(timestamp, marker.lastModified())
+            assertTrue(GeckoProfiles.markForDeletion(context, accountId))
+            assertFalse("The fast path must never undo a deletion", GeckoProfiles.confirmImport(context, accountId))
+        } finally { GeckoProfiles.delete(context, accountId) }
+    }
+
+    @Test
     fun independentDirectoriesAndLeasesPreventDeletingAnActiveProfile() {
         val firstId = id()
         val secondId = id()

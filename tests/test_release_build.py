@@ -181,7 +181,10 @@ def test_release_package_only_revalidates_before_copying(builder, monkeypatch, t
     monkeypatch.setattr(builder, 'release_verification_tools', lambda *_a: ('keytool', 'aapt2', 'apksigner'))
     monkeypatch.setattr(builder, 'configured_certificate_sha256', lambda *_a: 'a' * 64)
     monkeypatch.setattr(builder, 'run', lambda *_a, **_k: None)
-    monkeypatch.setattr(builder, 'verify_apk', lambda path, abi: {'runtime_checked': path == apk and abi == 'arm64-v8a'})
+    monkeypatch.setattr(builder, 'verify_apk', lambda path, abi: {
+        'runtime_checked': path == apk and abi == 'arm64-v8a', 'waa_worker_sha256': 'b' * 64})
+    monkeypatch.setattr(builder, 'verify_native_cache', lambda *_a: {
+        'source_sha256': 'c' * 64, 'artifacts': {'arm64-v8a': {'sha256': 'b' * 64}}})
     calls = []
     def verify(path, _java, _aapt, _signer, expected, version, code, _env):
         calls.append((path, expected, version, code))
@@ -200,6 +203,8 @@ def test_release_package_only_revalidates_before_copying(builder, monkeypatch, t
         assert result['build_invoked'] is False
         assert result['artifacts'][0]['build_type'] == 'release'
         assert result['artifacts'][0]['signing']['signature_verified']
+        assert result['native_source_sha256'] == 'c' * 64
+        assert result['artifacts'][0]['checks']['waa_source_provenance_verified']
         assert (root / 'artifacts/PG-Proxy-0.2.0-arm64-v8a-release.apk').read_bytes() == apk.read_bytes()
         assert not (root / 'artifacts/pg-proxy-apks.json').exists()
     assert calls == [(apk, 'a' * 64, '0.2.0', 20)]

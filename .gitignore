@@ -8,6 +8,7 @@ __pycache__/
 *.pyc
 data/
 artifacts/
+/outputs/
 /signing/
 signing.json
 *.apk

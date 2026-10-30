@@ -71,6 +71,14 @@ func (loop *eventLoop) schedule(delay time.Duration, job func()) {
 		loop.post(job)
 		return
 	}
+	// Hold the lock until timer is assigned and registered. A short delay may
+	// otherwise fire before AfterFunc returns, racing the captured pointer and
+	// leaving an already-fired timer in the registry.
+	loop.mu.Lock()
+	if loop.closed {
+		loop.mu.Unlock()
+		return
+	}
 	var timer *time.Timer
 	timer = time.AfterFunc(delay, func() {
 		loop.mu.Lock()
@@ -78,12 +86,6 @@ func (loop *eventLoop) schedule(delay time.Duration, job func()) {
 		loop.mu.Unlock()
 		loop.post(job)
 	})
-	loop.mu.Lock()
-	if loop.closed {
-		loop.mu.Unlock()
-		timer.Stop()
-		return
-	}
 	loop.timers[timer] = struct{}{}
 	loop.mu.Unlock()
 }

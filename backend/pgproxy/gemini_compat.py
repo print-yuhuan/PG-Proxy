@@ -4,6 +4,7 @@ Only settings are relaxed. Message data, function history and opaque signatures
 remain subject to the encoder's validation. Nothing here retries a generation.
 """
 import copy
+import json
 import math
 import re
 from datetime import datetime
@@ -49,12 +50,57 @@ def _strings(value):
     return list(dict.fromkeys(x for x in value if isinstance(x, str) and x)) if isinstance(value, list) else []
 
 
-def normalize_schema(value, *, root=None, references=(), depth=0):
+class _SchemaExpansionLimit(Exception):
+    """Abort a whole optional schema, never keep a partially expanded constraint."""
+
+
+class _SchemaBudget:
+    """Shared work and encoded-size bounds, including repeated reference targets."""
+    def __init__(self, nodes=4096, encoded_bytes=256 * 1024):
+        self.nodes = nodes
+        self.encoded_bytes = encoded_bytes
+
+    def visit(self):
+        self.nodes -= 1
+        if self.nodes < 0:
+            raise _SchemaExpansionLimit()
+
+    def charge(self, value):
+        # Charge local fields only: child schemas charge their own fields. Small
+        # object wrappers deliberately overestimate punctuation, so the final
+        # normalized schema cannot exceed this byte budget. iterencode bounds
+        # temporary memory for large examples instead of serializing them whole.
+        encoder = json.JSONEncoder(ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+        for piece in encoder.iterencode(value):
+            if len(piece) > self.encoded_bytes:
+                raise _SchemaExpansionLimit()
+            self.encoded_bytes -= len(piece.encode('utf-8'))
+            if self.encoded_bytes < 0:
+                raise _SchemaExpansionLimit()
+
+
+def normalize_schema(value, *, root=None, references=(), depth=0, _budget=None):
     """Project a schema onto the wire subset; None means no usable constraint.
 
     Unsupported constraints are omitted, never translated to invented rules.
-    Local references are resolved with depth/cycle limits; no remote fetching.
+    Local references have depth, cycle, total-work and output-size limits. An
+    exhausted budget drops the entire optional schema, including earlier fields.
     """
+    budget = _budget if _budget is not None else _SchemaBudget()
+    try:
+        return _normalize_schema(value, root=root, references=references, depth=depth, budget=budget)
+    except _SchemaExpansionLimit:
+        # A shared request budget stays exhausted for later function schemas.
+        budget.nodes = -1
+        return None
+    except UnicodeError:
+        # JSON can contain escaped lone surrogates; an optional schema must not
+        # turn those unencodable strings into an internal server error.
+        return None
+
+
+def _normalize_schema(value, *, root, references, depth, budget):
+    budget.visit()
     if not isinstance(value, dict) or depth > 48:
         return None
     root = value if root is None else root
@@ -70,11 +116,11 @@ def normalize_schema(value, *, root=None, references=(), depth=0):
             target = target.get(component.replace('~1', '/').replace('~0', '~'))
         if not isinstance(target, dict):
             return None
-        return normalize_schema({**target, **{k: v for k, v in value.items() if k in ('description', 'title')}},
-                                root=root, references=references + (reference,), depth=depth + 1)
+        return _normalize_schema({**target, **{k: v for k, v in value.items() if k in ('description', 'title')}},
+                                 root=root, references=references + (reference,), depth=depth + 1, budget=budget)
 
     def child(v):
-        return normalize_schema(v, root=root, references=references, depth=depth + 1)
+        return _normalize_schema(v, root=root, references=references, depth=depth + 1, budget=budget)
 
     kind = value.get('type')
     nullable = value.get('nullable') is True
@@ -102,27 +148,40 @@ def normalize_schema(value, *, root=None, references=(), depth=0):
     for key in ('format', 'description', 'pattern'):
         if isinstance(value.get(key), str):
             output[key] = value[key]
+    budget.charge(output)
     if kind == 'array':
+        budget.charge({'items': None})
         items = child(value.get('items'))
         if items is None:
             return None
         output['items'] = items
     if isinstance(value.get('properties'), dict):
-        output['properties'] = {k: normalized for k, v in value['properties'].items()
-                                if isinstance(k, str) and (normalized := child(v)) is not None}
+        budget.charge({'properties': {}})
+        output['properties'] = {}
+        for key, source in value['properties'].items():
+            if not isinstance(key, str):
+                continue
+            budget.charge({key: None})
+            normalized = child(source)
+            if normalized is not None:
+                output['properties'][key] = normalized
         for key in ('required', 'propertyOrdering'):
             names = [n for n in _strings(value.get(key)) if n in output['properties']]
             if names:
+                budget.charge({key: names})
                 output[key] = names
     # The verified wire enum accepts strings only. Keep numeric enums unconstrained.
     enum = value.get('enum')
     if isinstance(enum, list) and enum and all(isinstance(v, str) and v for v in enum):
-        output['enum'] = list(dict.fromkeys(enum))
+        enum = list(dict.fromkeys(enum))
+        budget.charge({'enum': enum})
+        output['enum'] = enum
     for key in ('minProperties', 'maxProperties', 'minLength', 'maxLength', 'minItems', 'maxItems', 'minimum', 'maximum'):
         if key in value:
             number = _number(value[key], None if key in ('minimum', 'maximum') else 0,
                              integer=key not in ('minimum', 'maximum'))
             if number is not None:
+                budget.charge({key: number})
                 output[key] = number
     for low, high in (('minimum', 'maximum'), ('minProperties', 'maxProperties'), ('minLength', 'maxLength'), ('minItems', 'maxItems')):
         if low in output and high in output and output[low] > output[high]:
@@ -130,17 +189,20 @@ def normalize_schema(value, *, root=None, references=(), depth=0):
             output.pop(high)
     if 'example' in value:
         try:
+            budget.charge({'example': value['example']})
             encode_value(value['example'])
             output['example'] = copy.deepcopy(value['example'])
-        except (PlaygroundError, RecursionError):
+        except (PlaygroundError, RecursionError, TypeError, ValueError, UnicodeError):
             pass
     for key in ('anyOf', 'oneOf', 'allOf'):
         if isinstance(value.get(key), list):
+            budget.charge({key: []})
             children = [child(v) for v in value[key]]
             # Dropping one union branch would strengthen the input constraint.
             if children and all(v is not None for v in children):
                 output[key] = children
     if isinstance(value.get('not'), dict):
+        budget.charge({'not': None})
         result = child(value['not'])
         if result == value['not']:
             output['not'] = result
@@ -256,7 +318,7 @@ def _content(value, codes):
     return content
 
 
-def _tools(request, model):
+def _tools(request, model, schema_budget):
     codes = model.get('_codes', [])
     output, names, builtin_names = [], set(), set()
     source = request.get('tools')
@@ -277,7 +339,7 @@ def _tools(request, model):
                 names.add(name)
                 if 'description' in entry and not isinstance(entry['description'], str):
                     entry.pop('description')
-                schema = normalize_schema(entry.pop('parametersJsonSchema', entry.get('parameters', {})))
+                schema = normalize_schema(entry.pop('parametersJsonSchema', entry.get('parameters', {})), _budget=schema_budget)
                 entry['parameters'] = schema or {'type': 'object'}
                 result.append(entry)
             if result:
@@ -331,7 +393,7 @@ def _tools(request, model):
         request.pop('toolConfig', None)
 
 
-def _config(value, model):
+def _config(value, model, schema_budget):
     codes, options = model.get('_codes', []), model.get('_options', {})
     source = value if isinstance(value, dict) else {}
     aliases = {'max_output_tokens': 'maxOutputTokens', 'top_p': 'topP', 'top_k': 'topK', 'stop_sequences': 'stopSequences',
@@ -356,7 +418,7 @@ def _config(value, model):
     mime = source.get('responseMimeType')
     if mime in ('text/plain', 'application/json', 'text/x.enum'):
         result['responseMimeType'] = mime
-    schema = normalize_schema(source.get('responseSchema', source.get('responseJsonSchema')))
+    schema = normalize_schema(source.get('responseSchema', source.get('responseJsonSchema')), _budget=schema_budget)
     if schema:
         result['responseSchema'] = schema
         result['responseMimeType'] = mime if mime in ('application/json', 'text/x.enum') else 'application/json'
@@ -482,8 +544,9 @@ def normalize_gemini_request(request, model):
         if isinstance(system, dict) and isinstance(system.get('parts'), list):
             system['parts'] = [{k: v for k, v in part.items() if k == 'text'} if isinstance(part, dict) else part for part in system['parts']]
         result['systemInstruction'] = system
-    result['generationConfig'] = _config(result.get('generationConfig'), model)
-    _tools(result, model)
+    schema_budget = _SchemaBudget()
+    result['generationConfig'] = _config(result.get('generationConfig'), model, schema_budget)
+    _tools(result, model, schema_budget)
     if 'safetySettings' in result:
         categories = {'HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_CIVIC_INTEGRITY'}
         thresholds = {'BLOCK_LOW_AND_ABOVE', 'BLOCK_MEDIUM_AND_ABOVE', 'BLOCK_ONLY_HIGH', 'BLOCK_NONE', 'OFF'}

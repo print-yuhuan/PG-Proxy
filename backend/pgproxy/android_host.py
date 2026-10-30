@@ -16,6 +16,7 @@ from .errors import PlaygroundError
 from .main import create_app
 from .waa import AndroidWAA
 from .request_statistics import RequestStatistics
+from .request_guard import MAX_HTTP_CONCURRENCY
 from .network_info import NetworkInfo
 
 
@@ -216,7 +217,7 @@ class Controller:
                                                               request_statistics=self.request_statistics),
             host='0.0.0.0' if config['lan'] else '127.0.0.1',port=config['port'],
             loop='asyncio',http='h11',ws='none',lifespan='on',access_log=False,log_config=None,
-            timeout_graceful_shutdown=3))
+            timeout_graceful_shutdown=3,limit_concurrency=MAX_HTTP_CONCURRENCY))
         self.server_task = asyncio.create_task(self.server.serve(sockets=[listener]))
         for _ in range(100):
             if self.server.started:

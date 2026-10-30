@@ -22,6 +22,7 @@ import zipfile
 from urllib.parse import urlsplit
 
 from collect_licenses import REQUIRED as REQUIRED_LICENSES, GECKO_VERSION
+from build_runtime import verify_native_cache
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -483,7 +484,7 @@ def main():
     parser.add_argument("--ndk", type=Path, help="Android NDK directory; otherwise Android NDK environment or local SDK")
     parser.add_argument("--sdk", type=Path, help="Android SDK directory; otherwise Android SDK environment/local.properties")
     parser.add_argument("--java", help="JDK java executable; otherwise JAVA_HOME or PATH")
-    parser.add_argument("--skip-native-build", action="store_true", help="Use previously built WAA binaries (still require them)")
+    parser.add_argument("--skip-native-build", action="store_true", help="Reuse WAA only when its source, ABI checksum and build provenance match")
     parser.add_argument("--build-wheels", action="store_true", help="Run the Android Python-wheel builder before Gradle")
     parser.add_argument("--bootstrap-rust", action="store_true", help="Explicitly install the wheel builder's pinned local Rust toolchain")
     parser.add_argument("--cargo-home", type=Path, help="Optional Cargo home passed to the wheel builder")
@@ -520,6 +521,7 @@ def main():
     # This offline collector retains committed notices when Rust/Go development
     # caches are absent, while refreshing the project's own attribution text.
     run([sys.executable, ROOT / "tools/collect_licenses.py"])
+    native_cache = None
     if not args.package_only:
         if not sdk or not java:
             parser.error("Install JDK 17+ and Android SDK; supply --java/--sdk or their environment variables")
@@ -530,9 +532,7 @@ def main():
             for abi in abis:
                 command += ["--abi", abi]
             run(command)
-        for abi in abis:
-            if not (ROOT / "app/src/main/jniLibs" / abi / "libpgwaa.so").is_file():
-                parser.error(f"Missing prebuilt WAA worker for {abi}")
+        native_cache = verify_native_cache(ROOT, abis)
         if args.build_wheels:
             if not ndk:
                 parser.error("The Python native-wheel builder requires --ndk or ANDROID_NDK_HOME")
@@ -573,6 +573,10 @@ def main():
             # does not disable its indexes. Missing cached outputs fail clearly.
             env["PIP_NO_INDEX"] = "1"
         run(command, env=env)
+    current_cache = verify_native_cache(ROOT, abis)
+    if native_cache is not None and current_cache != native_cache:
+        raise RuntimeError("Native inputs changed while building the app; rebuild before packaging")
+    native_cache = current_cache
     output = ROOT / "artifacts"
     output.mkdir(exist_ok=True)
     records = []
@@ -598,6 +602,9 @@ def main():
             raise RuntimeError("Invalid artifact version")
         source = directory / element["outputFile"]
         checks = verify_apk(source, abi)
+        if checks["waa_worker_sha256"] != native_cache["artifacts"][abi]["sha256"]:
+            raise RuntimeError(f"APK contains a stale WAA worker for {abi}; rebuild the APK before packaging")
+        checks["waa_source_provenance_verified"] = True
         signing = None
         if args.build_type == "release":
             signing = verify_release_apk(source, java, release_tools[1], release_tools[2], expected_certificate,
@@ -616,12 +623,15 @@ def main():
             copies.append((test_source, test_destination))
             records.append({"name": test_destination.name, "abi": abi, "kind": "instrumentation",
                             "bytes": test_source.stat().st_size, "sha256": sha256(test_source)})
+    if verify_native_cache(ROOT, abis) != native_cache:
+        raise RuntimeError("Native inputs changed during APK verification; rebuild before packaging")
     for source, destination in copies:
         shutil.copy2(source, destination)
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True)
     dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT, text=True, capture_output=True)
     report = {"name": "PG Proxy", "application_id": "dev.pgproxy.app", "packaged_at_utc": datetime.now(timezone.utc).isoformat(),
               "build_invoked": not args.package_only,
+              "native_source_sha256": native_cache["source_sha256"],
               "workspace_revision_at_packaging": revision.stdout.strip() if revision.returncode == 0 else None,
               "workspace_dirty_at_packaging": bool(dirty.stdout.strip()) if dirty.returncode == 0 else None,
               "signing": ("Verified release signing with a private local keystore" if args.build_type == "release"
