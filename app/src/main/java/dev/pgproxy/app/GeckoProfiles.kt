@@ -108,8 +108,11 @@ object GeckoProfiles {
     fun isImportPending(context: Context, id: String): Boolean = exists(context, id, "import-pending") && !isDeleted(context, id)
     fun markImportPending(context: Context, id: String): Boolean = !isDeleted(context, id) && write(context, id, "import-pending")
     fun confirmImport(context: Context, id: String): Boolean {
-        if (isDeleted(context, id) || !write(context, id, "registered")) return false
-        marker(context, id, "import-pending").delete()
+        if (isDeleted(context, id)) return false
+        // Periodic snapshots acknowledge an existing import without rewriting it.
+        // exists() also recovers an older AtomicFile backup before this fast path.
+        if (!exists(context, id, "registered") && !write(context, id, "registered")) return false
+        if (exists(context, id, "import-pending")) marker(context, id, "import-pending").delete()
         return true
     }
     fun reconcileImports(context: Context, existingIds: Collection<String>) {

@@ -215,7 +215,19 @@ class PlaygroundClient:
 
     async def _models(self):
         if not self.api_key:
-            await self._page()
+            try:
+                await self._page()
+            except BaseException:
+                # The page key is assigned before initialization RPCs finish.
+                # Roll back partial state, including cancellation, so only the
+                # next independent request retries initialization; never replay
+                # a generation here.
+                self.api_key = self.logging_context = self.visit_id = ''
+                self.benefit_tier_header = ''
+                self.page_globals = {}
+                self.catalog = {}
+                self.models_at = self.waa_at = 0
+                raise
         if not self.catalog or time.monotonic()-self.models_at>=self.settings.model_ttl:
             self.catalog = parse_models(await self._rpc('ListModels',[]))
             self.models_at = time.monotonic()

@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "PG Proxy private account session bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "browser_specific_settings": { "gecko": { "id": "session-bridge@pgproxy.local" } },
   "permissions": ["cookies", "webRequest", "nativeMessaging", "geckoViewAddons", "https://*.google.com/*"],
   "background": { "scripts": ["background.js"], "persistent": true },

@@ -26,13 +26,16 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import dev.pgproxy.app.ui.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.Locale
 import java.util.UUID
+import kotlin.coroutines.resume
 
 class MainActivity : ComponentActivity() {
     private var snapshot by mutableStateOf(JSONObject())
@@ -41,6 +44,7 @@ class MainActivity : ComponentActivity() {
     private var snapshotPending by mutableStateOf(false)
     private var connectionError by mutableStateOf("")
     private var snapshotRevision = 0
+    private var screenClosing = false
     private val pendingCalls = mutableSetOf<Int>()
     private var noticeText by mutableStateOf("")
     private var noticeSequence by mutableIntStateOf(0)
@@ -64,7 +68,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        GeckoProfiles.retryPending(this)
         themeMode = getSharedPreferences("appearance", MODE_PRIVATE).getString("theme", "system") ?: "system"
         setContent {
             PgProxyScreen(uiState(), uiActions()) {
@@ -81,6 +84,7 @@ class MainActivity : ComponentActivity() {
                     confirmButton = { TextButton(onClick = { detail = null }) { Text("完成") } }) }
             }
         }
+        cleanProfiles(showSuccess = false)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (true) { delay(5000); if (!busy) refresh() }
@@ -96,21 +100,30 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        screenClosing = true
         pendingCalls.toList().forEach(connector::cancel)
         pendingCalls.clear()
         super.onDestroy()
     }
 
     /** Release screen callbacks on destruction without cancelling service-side operations. */
-    private fun call(name: String, payload: JSONObject = JSONObject(), callback: (JSONObject) -> Unit) {
+    private fun call(name: String, payload: JSONObject = JSONObject(), callback: (JSONObject) -> Unit): Int {
         var completed = false
         var id = 0
         id = connector.call(name, payload) { response ->
             completed = true
             pendingCalls.remove(id)
-            if (!isDestroyed) callback(response)
+            if (!screenClosing && !isDestroyed) callback(response)
         }
         if (!completed) pendingCalls.add(id)
+        return id
+    }
+
+    private suspend fun awaitCall(name: String, payload: JSONObject): JSONObject = suspendCancellableCoroutine { continuation ->
+        val id = call(name, payload) { response ->
+            if (continuation.isActive) continuation.resume(response)
+        }
+        continuation.invokeOnCancellation { connector.cancel(id) }
     }
 
     private fun refreshNetworkInfo(force: Boolean = false) {
@@ -150,24 +163,43 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refresh() {
-        if (snapshotPending || busy || isDestroyed) return
+        if (snapshotPending || busy || screenClosing || isDestroyed) return
         snapshotPending = true
         val revision = snapshotRevision
         call("snapshot") { response ->
-            snapshotPending = false
             // A snapshot started before a mutation must never restore stale settings or credentials.
-            if (revision != snapshotRevision) return@call
-            pendingLogins = GeckoProfiles.pendingLogins(this)
+            if (revision != snapshotRevision) { snapshotPending = false; return@call }
             val result = response.optJSONObject("result")
             if (response.optBoolean("ok") && result != null && result.has("apiKey") && result.has("accounts")) {
-                snapshot = result
-                connected = true
-                connectionError = ""
-                val deleted = GeckoProfiles.deletedAccountIds(this).toSet()
-                val ids = accountList().map { account -> account.optString("id") }.filter { id -> id !in deleted }
-                GeckoProfiles.reconcileImports(this, ids)
-                restorePendingDeletions(deleted)
+                val ids = accountList(result).map { it.optString("id") }
+                lifecycleScope.launch {
+                    try {
+                        val profiles = ProfileStorageIo.run {
+                            val deleted = GeckoProfiles.deletedAccountIds(applicationContext).toSet()
+                            GeckoProfiles.reconcileImports(applicationContext, ids.filter { it !in deleted })
+                            deleted to GeckoProfiles.pendingLogins(applicationContext)
+                        }
+                        // Disk work can finish after a user mutation or Activity recreation.
+                        if (revision != snapshotRevision || screenClosing || isDestroyed) return@launch
+                        snapshot = result
+                        pendingLogins = profiles.second
+                        connected = true
+                        connectionError = ""
+                        restorePendingDeletions(profiles.first)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        if (revision == snapshotRevision && !screenClosing && !isDestroyed) {
+                            connected = false
+                            connectionError = "本机登录资料读取失败，请检查存储空间后刷新重试。"
+                        }
+                    } finally {
+                        snapshotPending = false
+                        if (revision != snapshotRevision && !busy && !screenClosing && !isDestroyed) refresh()
+                    }
+                }
             } else {
+                snapshotPending = false
                 connected = false
                 connectionError = if (response.optBoolean("ok")) "服务状态读取失败，请刷新重试。" else ErrorMessages.fromResponse(response)
             }
@@ -180,11 +212,65 @@ class MainActivity : ComponentActivity() {
             val id = account.getString("id")
             account.put("enabled", false).put("status", "deleting")
             if (pendingDeletions.add(id)) call("delete_account", JSONObject().put("id", id)) { result ->
-                pendingDeletions.remove(id)
                 if (result.optBoolean("ok") || result.optJSONObject("error")?.optString("code") == "account_not_found") {
-                    GeckoProfiles.delete(this, id)
-                }
+                    lifecycleScope.launch {
+                        try { ProfileStorageIo.run { GeckoProfiles.delete(applicationContext, id) } }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { /* Durable cleanup marker remains for the next attempt. */ }
+                        finally { pendingDeletions.remove(id) }
+                    }
+                } else pendingDeletions.remove(id)
             }
+        }
+    }
+
+    /** Hold the UI mutation guard through durable journaling, IPC and disk cleanup. */
+    private fun profileAction(operation: suspend () -> Unit) {
+        if (busy || screenClosing || isDestroyed) return
+        snapshotRevision++
+        busy = true
+        lifecycleScope.launch {
+            try { operation() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { notice = "本机登录资料处理失败，请检查存储空间后重试。" }
+            finally {
+                busy = false
+                if (!screenClosing && !isDestroyed) refresh()
+            }
+        }
+    }
+
+    private fun cleanProfiles(showSuccess: Boolean = true) = profileAction {
+        val cleaned = ProfileStorageIo.run { GeckoProfiles.retryPending(applicationContext) }
+        if (!cleaned) notice = "清理未完成，请关闭登录页面后重试"
+        else if (showSuccess) notice = "浏览器会话已清理"
+    }
+
+    private fun deleteCredential(id: String, unfinished: Boolean) {
+        if (busy || !connected) return
+        profileAction {
+            if (!ProfileStorageIo.run { GeckoProfiles.markForDeletion(applicationContext, id) }) {
+                notice = "无法记录清理状态，请检查存储空间后重试"
+                return@profileAction
+            }
+            val response = awaitCall("delete_account", JSONObject().put("id", id))
+            val absent = response.optJSONObject("error")?.optString("code") == "account_not_found"
+            if (response.optBoolean("ok") || absent) {
+                response.optJSONObject("result")?.let { if (it.has("accounts") && it.has("apiKey")) snapshot = it }
+                val cleaned = ProfileStorageIo.run { GeckoProfiles.delete(applicationContext, id) }
+                notice = if (!cleaned) "浏览器清理未完成，请在设置中重试"
+                    else if (unfinished) "登录会话已清除" else "凭证及浏览器会话已清理"
+            } else {
+                notice = ErrorMessages.fromResponse(response)
+                markConnectionError(response)
+            }
+        }
+    }
+
+    private fun markConnectionError(response: JSONObject) {
+        if (response.optJSONObject("error")?.optString("code") in setOf("service_timeout", "service_disconnected", "service_bind_failed", "service_invalid_response", "backend_unavailable")) {
+            connected = false
+            connectionError = ErrorMessages.fromResponse(response)
         }
     }
 
@@ -197,10 +283,7 @@ class MainActivity : ComponentActivity() {
             response.optJSONObject("result")?.let { if (it.has("accounts") && it.has("apiKey")) snapshot = it }
             if (!response.optBoolean("ok")) {
                 notice = ErrorMessages.fromResponse(response)
-                if (response.optJSONObject("error")?.optString("code") in setOf("service_timeout", "service_disconnected", "service_bind_failed", "service_invalid_response", "backend_unavailable")) {
-                    connected = false
-                    connectionError = notice
-                }
+                markConnectionError(response)
             }
             else {
                 notice = when (name) {
@@ -292,35 +375,17 @@ class MainActivity : ComponentActivity() {
         onAddAccount = { openLogin(label = it) }, onLogin = { id, label -> openLogin(id, label) },
         onEnableAccount = { id, enabled -> action("set_enabled", JSONObject().put("id", id).put("enabled", enabled)) },
         onCheckAccount = { action("check_account", JSONObject().put("id", it)) },
-        onDeleteAccount = { id ->
-            if (busy || !connected) Unit
-            else if (!GeckoProfiles.markForDeletion(this, id)) notice = "无法记录清理状态，请检查存储空间后重试"
-            else action("delete_account", JSONObject().put("id", id)) {
-                notice = if (GeckoProfiles.delete(this, id)) "凭证及浏览器会话已清理" else "浏览器清理未完成，请在设置中重试"
-            }
-        },
-        onDiscardLogin = { id ->
-            if (busy || !connected) Unit
-            else if (!GeckoProfiles.markForDeletion(this, id)) notice = "无法记录清理状态，请检查存储空间后重试"
-            else {
-                snapshotRevision++
-                busy = true
-                call("delete_account", JSONObject().put("id", id)) { result ->
-                    busy = false
-                    val absent = result.optJSONObject("error")?.optString("code") == "account_not_found"
-                    if (result.optBoolean("ok") || absent) {
-                        notice = if (GeckoProfiles.delete(this, id)) "登录会话已清除" else "已标记清理，请关闭登录页后重试"
-                    } else notice = "删除已排队，稍后会继续清理"
-                    refresh()
-                }
-            }
-        },
+        onDeleteAccount = { deleteCredential(it, unfinished = false) },
+        onDiscardLogin = { deleteCredential(it, unfinished = true) },
         onConfigure = { config -> action("configure", JSONObject().put("port", config.port).put("lan", config.lan)
             .put("apiKey", config.apiKey).put("timeout", config.timeout).put("queueTimeout", config.queueTimeout)
             .put("keepAwake", config.keepAwake)) },
         onCopy = ::copy,
-        onDiagnostics = { action("diagnostics") { detail = it.put("browser", GeckoProfiles.diagnostics(this)).toString(2) } },
-        onCleanup = { notice = if (GeckoProfiles.retryPending(this)) "浏览器会话已清理" else "清理未完成，请关闭登录页面后重试" },
+        onDiagnostics = { action("diagnostics") { result -> profileAction {
+            val browser = ProfileStorageIo.run { GeckoProfiles.diagnostics(applicationContext) }
+            detail = result.put("browser", browser).toString(2)
+        } } },
+        onCleanup = { cleanProfiles() },
         onOpenLicenses = { startActivity(Intent(this, LicensesActivity::class.java)) },
         onOpenRepository = { openProjectPage(ProjectLinks.REPOSITORY, "仓库") },
         onOpenIssues = { openProjectPage(ProjectLinks.ISSUES, "问题反馈") },
@@ -340,7 +405,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun accountList(): List<JSONObject> = snapshot.optJSONArray("accounts")?.let { list ->
+    private fun accountList(value: JSONObject = snapshot): List<JSONObject> = value.optJSONArray("accounts")?.let { list ->
         (0 until list.length()).mapNotNull { list.optJSONObject(it) }.filter { it.optString("id").isNotBlank() }
     } ?: emptyList()
     private fun localAddresses(): List<String> = try {

@@ -10,6 +10,7 @@ from .errors import PlaygroundError
 from .openai_routes import router as openai_router
 from .gemini_routes import router as gemini_router
 from .request_statistics import RequestStatistics, RequestStatisticsMiddleware
+from .request_guard import RequestGuardMiddleware
 
 
 def create_app(client, close_on_shutdown=True, request_statistics=None):
@@ -23,6 +24,8 @@ def create_app(client, close_on_shutdown=True, request_statistics=None):
                 await app.state.playground.close()
 
     app = FastAPI(title=NAME,version=VERSION,lifespan=lifespan)
+    # Added before CORS/statistics so early rejections retain their headers/counts.
+    app.add_middleware(RequestGuardMiddleware)
     app.add_middleware(CORSMiddleware,allow_origins=['*'],allow_methods=['GET','POST','OPTIONS'],allow_headers=['*'])
     statistics = request_statistics if request_statistics is not None else RequestStatistics()
     app.state.request_statistics = statistics
