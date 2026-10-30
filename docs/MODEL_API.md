@@ -1,6 +1,6 @@
 # 模型目录与 API 使用说明
 
-本文说明在线模型目录、能力字段和接口限制，核对日期为 **2026-10-30**。19 个模型及代表性功能的真实测试结果见 [Pixel 10 验证记录](MODEL_CAPABILITIES_TEST.md)；该轮未重新进行真机测试。
+本文说明 **PG Proxy 0.2.0** 的在线模型目录、能力字段和接口限制，核对日期为 **2026-10-30**。19 个模型及代表性功能的历史真实测试结果来自 0.1.0，见 [Pixel 10 验证记录](MODEL_CAPABILITIES_TEST.md)；0.2.0 的参数兼容合同测试不能替代新安装包的设备与真实生成验收。
 
 **模型列表在线获取，不是固定名单。** PG Proxy 使用已登录凭证读取 Playground `ListModels`，默认缓存最多 300 秒。新增模型符合当前生成通道的筛选条件即可进入目录；缺少可靠资料的能力保留为 `null` 或省略。
 
@@ -96,11 +96,13 @@ curl --fail-with-body http://127.0.0.1:8888/v1beta/models/gemini-4-argon \
 基础参数包括采样、输出上限、停止词和 `response_format`，其余参数按模型能力列出：
 
 - `reasoning_effort`：至少能表达一种有效思考级别或零预算时提供；具有思考能力的模型不一定支持此参数。
-- `thinking_config`：与 `reasoning_effort` 二选一，不能同时设置。
+- `thinking_config`：同时提供 `reasoning_effort` 时，以显式 `thinking_config` 为准。
 - `image_config`：图像模型允许配置比例或尺寸时提供。
 - 工具、函数调用、媒体分辨率和转写参数：仅在对应能力允许时提供。
 
 OpenRouter 的 `reasoning` 请求对象尚未实现，不会加入支持列表。
+
+兼容层会忽略未知或无法支持的可选设置，并补全能够推断的缺省值。`pg_proxy.proxy.request_compatibility` 说明处理策略；接受请求不等于执行了被忽略的参数，详见[客户端兼容](CLIENT_COMPATIBILITY.md)。
 
 ## 4. Gemini 目录字段
 
@@ -308,7 +310,7 @@ curl --fail-with-body \
 }
 ```
 
-顶层 `contents` 与 `generateContentRequest` 二选一。包装内填写的模型必须与路径一致；未知字段或无法可靠编码的结构返回 `400`，模型未声明 `countTokens` 时返回方法不支持错误。
+顶层 `contents` 与 `generateContentRequest` 二选一。包装内填写的模型必须与路径一致；未知可选字段忽略，无法可靠编码的正文或结构仍返回 `400`，模型未声明 `countTokens` 时返回方法不支持错误。
 
 计数与生成共享凭证操作队列，但计数不推进生成轮询位置，也不将凭证标记为“生成验证通过”。概览请求统计包含计数和模型详情接口；计数成功仅说明该次计数完成。
 
@@ -319,40 +321,40 @@ curl --fail-with-body \
 | 功能 | 当前行为 |
 | --- | --- |
 | 函数调用 | 依据模型能力支持函数声明、函数调用／结果、ID 与签名回传；Google `AUTO`／`NONE`、OpenAI `auto`／`none`；原生允许在已声明函数内选择 `allowedFunctionNames` 子集 |
-| 强制函数调用 | Google `ANY`／`VALIDATED`、OpenAI `required`／指定函数名称拒绝，不以提示词模拟协议约束 |
-| 并行函数参数 | OpenAI `parallel_tool_calls: false` 拒绝；`true` 仍需函数声明 |
-| JSON 输出 | 支持文本、JSON 对象和已实现的 JSON Schema 编码；不是任意 JSON Schema 实现。开放节点、循环引用及无法精确编码的约束拒绝，OpenAI `strict: true` 拒绝 |
+| 强制函数调用 | Google `ANY`／`VALIDATED`、OpenAI `required`／指定函数名称退回 `AUTO`／`auto`；不承诺强制调用，不以提示词模拟约束 |
+| 并行函数参数 | 忽略无法执行的 OpenAI `parallel_tool_calls: false` 限制；`true` 配合有效函数声明使用 |
+| JSON 输出 | 支持文本、JSON 对象和可编码的 JSON Schema 子集；忽略 `strict: true` 和未实现约束，无法表达的 Schema 不作为强制要求，不承诺严格校验输出 |
 | 内置工具 | 根据目录能力提供搜索、图片搜索、代码执行、URL Context、Maps；Maps 自定义坐标等选项未接入；部分工具组合有显式限制 |
 
 ### 媒体与长输出
 
 | 功能 | 当前行为 |
 | --- | --- |
-| 原生媒体 | `inlineData`、HTTPS `fileData` 及视频／媒体配置；STATIC 的 `videoMetadata` 与 AGENTIC 互斥，FPS 范围为 `(0,24]`；没有 Drive 上传、Files API 或任意文件管理服务 |
-| OpenAI 图片输入 | 仅 base64 `data:image/...`，不自动下载远程图片；`detail` 仅接受 `auto` |
+| 原生媒体 | `inlineData`、HTTPS `fileData` 及视频／媒体配置；同时指定 `videoMetadata` 与 AGENTIC 时保留 STATIC 配置，FPS 按 `(0,24]` 处理；没有 Drive 上传、Files API 或任意文件管理服务 |
+| OpenAI 图片输入 | 仅 base64 `data:image/...`，不自动下载远程图片；忽略 `detail` 提示，保留图片正文 |
 | OpenAI 音频输入 | `input_audio` 的 base64 音频，支持已列出的格式；是否能调用仍受模型输入能力限制 |
 | OpenAI 文档／视频输入 | 当前拒绝，需改用原生 Gemini 接口 |
 | OpenAI 媒体输出 | 图片通过 `images` 扩展；音频通过带真实 MIME 的 `audio_chunks` 返回，不提供标准 OpenAI `audio.voice`／`audio.format` 转码接口。独立的 `speech_config` 仍受模型语音能力限制，不因此开放未列出的 TTS 模型 |
 | 转写配置 | 仅接受模型声明的字段和语言代码；词表、智能转写与时间戳／说话人标注存在组合限制，见下文 |
 | 长输出 | 续写模型跨轮保持同一凭证、每轮新 proof、隐藏中间结束标记并累计用量；真实长输出、工具与媒体组合仍需单独验收 |
 
-参数不受支持时，根据 `400` 提示修正请求即可，无需因此重新登录。认证失败、权限拒绝、限流与网络异常分别处理；生成失败不会自动重放到另一个账号。
+不支持的可选参数会忽略，支持的设置继续处理。缺失正文、损坏媒体、无法关联的函数历史等核心数据仍返回明确错误；认证失败、权限拒绝、限流与网络异常分别处理，生成失败不会自动重放到另一个账号。完整默认值与优先级见[客户端兼容](CLIENT_COMPATIBILITY.md)。
 
 ### 转写配置与时间戳
 
 原生请求使用 `generationConfig.transcriptionConfig`，OpenAI 请求使用顶层 `transcription_config`。两者内部均使用 `wordTimestamps`、`speakerLabels`、`customVocabulary`、`languageCodes`、`smartTranscription`，并按模型能力分别校验；音频输入能力不等于支持全部转写选项。
 
-代理在发送生成请求前检查下列限制。冲突组合返回 `400 / invalid_request_error`，提示具体字段，不会自动关闭其中一项：
+代理在发送生成请求前处理下列限制。时间戳／说话人标注优先，冲突的可选设置忽略：
 
 | 设置 | 限制 |
 | --- | --- |
-| 非空 `customVocabulary` | 不能与 `wordTimestamps: true` 或 `speakerLabels: true` 同时使用 |
-| `smartTranscription: true` | 不能与 `wordTimestamps: true` 或 `speakerLabels: true` 同时使用 |
+| 非空 `customVocabulary` | 同时启用时间戳或说话人标注时，忽略词表 |
+| `smartTranscription: true` | 同时启用时间戳或说话人标注时，忽略 Smart 开关 |
 | `wordTimestamps: true` 与 `speakerLabels: true` | 可以一起表达；不得再同时开启上述冲突选项 |
 | 空词表或值为 `false` 的开关 | 不视为启用了对应选项；不会因键存在就自动判断冲突 |
-| `languageCodes` | 目录提供非空 `pg_proxy.upstream.options.languages` 时，必须精确使用其中的代码，不自动改写语言或地区后缀 |
+| `languageCodes` | 目录提供非空 `pg_proxy.upstream.options.languages` 时，仅保留其中的代码，不猜测语言或改写地区后缀 |
 
-例如，已验收的转写模型目录列出英语代码 `en`，应提交 `"languageCodes": ["en"]`，不能替换成 `en-US` 或 `EN`。不在已知枚举内的值返回 `400`，提示查看 `pg_proxy.upstream.options.languages`；目录未提供枚举时，则交由上游校验。各配置组合的真实测试结果见[模型能力验收记录](MODEL_CAPABILITIES_TEST.md)。
+例如，已验收的转写模型目录列出英语代码 `en`，需要指定英语时应提交 `"languageCodes": ["en"]`。`en-US` 或 `EN` 等不在枚举中的值会被忽略；若没有剩余有效值，则使用上游默认行为，不伪造语言映射。目录未提供枚举时，交由上游校验。各配置组合的历史真实测试结果见[模型能力验收记录](MODEL_CAPABILITIES_TEST.md)，兼容过滤本身的测试范围另见[客户端兼容](CLIENT_COMPATIBILITY.md)。
 
 原生响应的文本 Part 保留上游给出的 `transcriptionMetadata.speaker` 和 `timestamps`；时间戳条目保留相应 `text`、`start`、`end`。下面只是字段形状示例，不是固定转写结果：
 

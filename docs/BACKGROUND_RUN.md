@@ -63,13 +63,13 @@ PG Proxy 使用前台服务和运行通知，并提供电池设置引导与可�
 
 ### 复现后台测试
 
-先按[构建与维护](MAINTENANCE.md)生成主 APK 与测试 APK，再选择测试类运行。以下命令中的设备编号应替换为自己的模拟器编号：
+先按[构建与维护](MAINTENANCE.md)生成主 APK 与测试 APK，再选择测试类运行。以下按当前 0.2.0 构建文件名举例，设备编号应替换为自己的模拟器编号；命令更新不表示已对 0.2.0 重新执行后台验收：
 
 ```powershell
 cd D:\PG-Proxy
 .venv\Scripts\python.exe -m pytest -q
-adb -s emulator-5556 install -r artifacts\PG-Proxy-0.1.0-x86_64.apk
-adb -s emulator-5556 install -r artifacts\PG-Proxy-0.1.0-x86_64-androidTest.apk
+adb -s emulator-5556 install -r artifacts\PG-Proxy-0.2.0-x86_64.apk
+adb -s emulator-5556 install -r artifacts\PG-Proxy-0.2.0-x86_64-androidTest.apk
 adb -s emulator-5556 shell am instrument -w -e class 'dev.pgproxy.app.UIInstrumentedTest,dev.pgproxy.app.WakeLockInstrumentedTest,dev.pgproxy.app.BackgroundSettingsInstrumentedTest,dev.pgproxy.app.BackgroundRuntimeInstrumentedTest,dev.pgproxy.app.ForegroundStateInstrumentedTest,dev.pgproxy.app.RuntimeInstrumentedTest,dev.pgproxy.app.ProxyConnectorInstrumentedTest' dev.pgproxy.app.test/androidx.test.runner.AndroidJUnitRunner
 ```
 

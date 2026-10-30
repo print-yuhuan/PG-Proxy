@@ -89,7 +89,7 @@ def test_release_signature_does_not_weaken_sdk37_identity_checks(builder, output
         builder.validate_release_signature(output, 'a' * 64)
 
 
-def manifest_output(name='dev.pgproxy.app', version='0.1.0', code='10', debug=False):
+def manifest_output(name='dev.pgproxy.app', version='0.2.0', code='20', debug=False):
     return (f"package: name='{name}' versionCode='{code}' versionName='{version}'\n"
             "application-label:'PG Proxy'\n" + ('application-debuggable\n' if debug else ''))
 
@@ -100,11 +100,11 @@ def manifest_output(name='dev.pgproxy.app', version='0.1.0', code='10', debug=Fa
 ])
 def test_release_manifest_uses_actual_identity_and_debug_flag(builder, output):
     with pytest.raises(RuntimeError):
-        builder.validate_release_manifest(output, '0.1.0', 10)
+        builder.validate_release_manifest(output, '0.2.0', 20)
 
 
 def test_release_manifest_accepts_non_debuggable_matching_package(builder):
-    assert builder.validate_release_manifest(manifest_output(), '0.1.0', 10) == {
+    assert builder.validate_release_manifest(manifest_output(), '0.2.0', 20) == {
         'manifest_identity_verified': True, 'debuggable': False}
 
 
@@ -140,7 +140,7 @@ def test_release_package_only_revalidates_before_copying(builder, monkeypatch, t
     apk.write_bytes(b'synthetic-apk-container')
     (apk_dir / 'output-metadata.json').write_text(json.dumps({
         'applicationId': 'dev.pgproxy.app', 'elements': [
-            {'versionName': '0.1.0', 'versionCode': 10, 'outputFile': apk.name}]}))
+            {'versionName': '0.2.0', 'versionCode': 20, 'outputFile': apk.name}]}))
     key = tmp_path / 'release.jks'
     key.write_text('synthetic signing fixture')
     for name, value in signing_env(key).items():
@@ -171,6 +171,6 @@ def test_release_package_only_revalidates_before_copying(builder, monkeypatch, t
         assert result['build_invoked'] is False
         assert result['artifacts'][0]['build_type'] == 'release'
         assert result['artifacts'][0]['signing']['signature_verified']
-        assert (root / 'artifacts/PG-Proxy-0.1.0-arm64-v8a-release.apk').read_bytes() == apk.read_bytes()
+        assert (root / 'artifacts/PG-Proxy-0.2.0-arm64-v8a-release.apk').read_bytes() == apk.read_bytes()
         assert not (root / 'artifacts/pg-proxy-apks.json').exists()
-    assert calls == [(apk, 'a' * 64, '0.1.0', 10)]
+    assert calls == [(apk, 'a' * 64, '0.2.0', 20)]

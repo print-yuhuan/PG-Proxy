@@ -73,6 +73,17 @@ def test_builtin_tools_and_transcription_extensions_map_to_native_validation():
 
 
 @pytest.mark.parametrize('changes', [
+    {'messages': [{'role': 'tool', 'tool_call_id': 'missing', 'content': 'no'}]},
+    {'messages': [{'role': 'assistant', 'content': None, 'tool_calls': [call()]}]},
+    {'messages': [{'role': 'assistant', 'content': None, 'tool_calls': [call()]}, {'role': 'user', 'content': 'skip response'}]},
+])
+def test_incomplete_or_ambiguous_history_is_still_rejected(changes):
+    with pytest.raises(PlaygroundError) as caught:
+        openai_request_to_gemini(request(**changes))
+    assert caught.value.status == 400
+
+
+@pytest.mark.parametrize('changes', [
     {'tool_choice': 'required', 'tools': [TOOL]},
     {'tool_choice': {'type': 'function', 'function': {'name': 'get_weather'}}, 'tools': [TOOL]},
     {'tool_choice': 'auto'},
@@ -80,9 +91,6 @@ def test_builtin_tools_and_transcription_extensions_map_to_native_validation():
     {'parallel_tool_calls': 1, 'tools': [TOOL]},
     {'tools': [TOOL, TOOL]},
     {'tools': [{'type': 'function', 'function': {'name': 'f', 'strict': True}}]},
-    {'messages': [{'role': 'tool', 'tool_call_id': 'missing', 'content': 'no'}]},
-    {'messages': [{'role': 'assistant', 'content': None, 'tool_calls': [call()]}]},
-    {'messages': [{'role': 'assistant', 'content': None, 'tool_calls': [call()]}, {'role': 'user', 'content': 'skip response'}]},
     {'messages': [{'role': 'user', 'content': 'x', 'tool_calls': []}]},
     {'response_format': {'type': 'json_schema', 'json_schema': {'name': 'answer', 'schema': {}, 'strict': True}}},
     {'thinking_config': {}, 'reasoning_effort': 'high'},
@@ -92,10 +100,14 @@ def test_builtin_tools_and_transcription_extensions_map_to_native_validation():
     {'max_tokens': 10, 'max_completion_tokens': 20},
     {'audio': {'format': 'mp3', 'voice': 'alloy'}},
 ])
-def test_unsupported_or_ambiguous_features_rejected(changes):
-    with pytest.raises(PlaygroundError) as caught:
-        openai_request_to_gemini(request(**changes))
-    assert caught.value.status == 400
+def test_unsupported_optional_controls_keep_the_supported_conversation(changes):
+    model, payload = openai_request_to_gemini(request(**changes))
+    assert model == 'test-chat'
+    assert payload['contents'][0]['parts'][0]['text'] == changes.get('messages', [{'content': 'Weather?'}])[0]['content']
+    if 'max_completion_tokens' in changes:
+        assert payload['generationConfig']['maxOutputTokens'] == changes['max_completion_tokens']
+    if 'tool_choice' in changes and changes.get('tools'):
+        assert payload['toolConfig']['functionCallingConfig']['mode'] == 'AUTO'
 
 
 @pytest.mark.parametrize('arguments', ['[1]', 'null', '{broken', '{"x":NaN}'])
@@ -129,7 +141,6 @@ def test_image_and_audio_input_never_download_remote_urls():
 @pytest.mark.parametrize('part', [
     {'type': 'image_url', 'image_url': {'url': 'https://example.test/private.png'}},
     {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,!!!'}},
-    {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,eA==', 'detail': 'high'}},
     {'type': 'input_audio', 'input_audio': {'data': 'eA==', 'format': 'unknown'}},
     {'type': 'input_audio', 'input_audio': {'data': 'eA==', 'format': {}}},
 ])

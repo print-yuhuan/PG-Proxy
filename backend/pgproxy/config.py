@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import secrets
 
 NAME = 'PG Proxy'
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 ORIGIN = 'https://aistudio.google.com'
 RPC_BASE = 'https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/'
 WAA_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0'
