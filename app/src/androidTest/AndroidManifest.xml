@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Gradle selects both runner and process with -PpgLoginRecoveryTests=true. -->
+    <instrumentation
+        android:name="${pgTestRunner}"
+        android:targetPackage="dev.pgproxy.app"
+        android:targetProcesses="${pgTestProcesses}"
+        android:functionalTest="true"
+        android:handleProfiling="false" />
+</manifest>
