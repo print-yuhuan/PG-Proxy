@@ -1,9 +1,11 @@
 # 验证总览与复现
 
-本页汇总 **PG Proxy 0.1.0、0.2.0 与 0.3.0** 在 **2026-10-29 至 2026-10-30** 的开发与验收记录。每项结果对应具体阶段、架构和安装包；正式 Release 的源码、签名与附件校验以其公开 `BUILD_INFO.json` 和发布说明为准。
+本页汇总 **PG Proxy 0.1.0 至 0.3.1** 在 **2026-10-29 至 2026-10-31** 的开发与验收记录。每项结果对应具体阶段、架构和安装包；正式 Release 的源码、签名与附件校验以其公开 `BUILD_INFO.json` 和发布说明为准。
 
 | 记录 | 环境与主要内容 | 详细报告 |
 | --- | --- | --- |
+| 0.3.1 · 2026-10-31 登录恢复发布 | 版本码 31；正式签名 ARM64 发布及对应新包验证 | 下节 |
+| 2026-10-31 · 登录连接重置恢复 | 默认 Pixel 10 / Android 17；开发包、真实浏览器启动与合成故障注入 | 下节 |
 | 0.3.0 · 2026-10-30 审查修复 | 本地回归与 Pixel 10 模拟器；入口保护、界面、生命周期、真实 WAA 与 API | 下节及[客户端兼容](CLIENT_COMPATIBILITY.md) |
 | 0.2.0 · 2026-10-30 请求兼容 | Windows；客户端请求合同、异常输入与 ARM64 打包流程 | [客户端兼容](CLIENT_COMPATIBILITY.md)及下节 |
 | 2026-10-30 模型能力适配 | x86_64 模拟器；19 个模型、计数、工具、媒体与流式 | [模型能力验收](MODEL_CAPABILITIES_TEST.md) |
@@ -12,6 +14,65 @@
 | 构建、签名与 UI 整理 | 各阶段离线回归、APK 检查及合成界面测试 | 本页后续章节 |
 
 这些历史记录不构成新 ARM64 发布包的安装运行证明。新的构建与签名结果、是否完成真机安装及真实生成，应在对应 Release 中分别说明。
+
+## 0.3.1 · 2026-10-31 登录恢复发布
+
+0.3.1（版本码 31）包含下节的登录连接重置恢复修复，并同步应用、后端、浏览器桥接与文档版本。保持 0.2.0／0.3.0 的正式签名身份，使用 `arm64-v8a` 构建发布包。
+
+版本更新后重新构建并在默认 **Pixel_10_API_37_Debug / Android 17 / API 37 / x86_64** 覆盖安装 0.3.1（版本码 31）Debug 包，重新执行以下检查：
+
+| 检查 | 本次 0.3.1 结果 |
+| --- | --- |
+| Python 回归 | **853 项通过**，1 项已有 Starlette 弃用警告；使用替身上游与本机请求 |
+| JVM 导航与恢复策略 | **16 项通过** |
+| 登录恢复综合用例 | **1 项用例、10 个检查点通过**；实际等待 30 秒验证超时，使用合成错误与记录会话 |
+| 常规 Android 回归 | **37 项通过**；包含资料、存储线程、Binder、21 项 UI 交互及本地 HTTP 入口 |
+| 安装与状态 | 设备 APK 与本机构建哈希一致，已安装版本确认为 0.3.1／31，配置与凭证列表保持不变，恢复原服务状态 |
+| 清理与崩溃记录 | 合成登录 profile 已定点清理；检查时 crash buffer 未发现 PG Proxy 崩溃记录 |
+
+本轮 x86_64 Debug APK SHA-256：`28fbbd1fe543ce238cda3f512adbe93c22caa75f2014e61ac77ea32b2275ac9a`。日志与脱敏报告存放于 Git 忽略的 `artifacts/release-0.3.1/`。下节保留早期标记为 0.3.0 的开发包原始记录；上述结果来自重新构建的 0.3.1 新包。
+
+正式 ARM64 包从最终干净提交另行构建并校验；源码提交、签名与附件哈希以 [Release 公开构建清单](https://github.com/print-yuhuan/PG-Proxy/releases/tag/v0.3.1)为准。**本轮未在 ARM64 设备安装运行正式附件**，x86_64 Debug 包结果不能替代该验收。
+
+本次未重新验证真实 Google 登录后发生连接重置、恢复成功并自动导入的端到端链路，也不扩大既有模型生成、真机后台及局域网验收范围。更新内容与升级说明见[0.3.1 发布说明](releases/0.3.1.md)。
+
+## 2026-10-31 登录连接重置恢复
+
+用户反馈：输入账号或完成 Google 验证后出现 `3 / 147`，手动点击“打开 Playground”后可以进入并导入凭证。项目所用 Gecko 159 将该错误定义为网络连接重置；它与此前 `accounts.youtube.com` 被白名单拦截导致的 `1 / 17` 不同，旧的精确主机放行仍保留。
+
+该修复随 **0.3.1** 发布：在观察到可信 Google 登录跳转后，遇到连接重置会使用**同一 Gecko 会话**自动打开一次 Playground。它仍需通过原有的页面、HTTPS、账号路由和导入确认检查。恢复失败或 30 秒未完成页面加载时给出明确提示，手动重试不重置自动尝试次数；关闭页面或开始导入后取消恢复任务。证书错误不触发恢复，也不会降低证书验证要求。
+
+本轮使用现有 **`Pixel_10_API_37_Debug` / Android 17 / API 37 / x86_64**，ADB 序列号核对为 `emulator-5554`。未操作真机，未创建或重置 AVD，未使用其他模拟器的登录资料。
+
+- 测试包：0.3.0（版本码 30）x86_64 **Debug 开发包**，包含当时尚未发布、后续纳入 0.3.1 的源码修改，不能与已发布的 0.3.0 Release 或 0.3.1 新包混同。
+- APK SHA-256：`1821b246dd39606bf0ab3425468414c74cc606ed7297f1c8af1d05af76407d43`。
+- JVM 导航及恢复策略：**16 项通过**；Python 后端回归：**853 项通过**，含 1 项已有 Starlette 弃用警告。
+- 专用登录进程 instrumentation：**1 个综合用例、10 个检查点通过**，实际启动 Gecko 和登录 Activity，再向产品回调注入合成错误；导航使用记录会话以隔离网络时序。
+- 默认主进程 instrumentation：**37 项通过**，覆盖登录资料与导入标记、存储线程、Binder 回调、21 项界面交互及本地 HTTP 入口回归；测试结束恢复原服务运行状态，未新增或删除真实凭证。
+- 实际界面检查：新包启动正常，Google 登录页面可打开；恢复失败及证书错误弹窗的说明与操作按钮可见。
+
+综合用例检查首次打开失败不自动跳转、HOME 原始错误的重复回调、延迟且仅一次的恢复、恢复失败提示、手动重试次数、旧页面回调、实际等待 30 秒的超时、安全错误、返回取消、导入／关闭门禁和凭证读取前提。测试后关闭专用进程，仅清理本次随机测试 profile。
+
+**验证边界：**默认模拟器本次为新安装，没有已登录 Google 凭证；未在此设备重新完成真实账号登录、恢复后自动导入或模型生成。合成回调测试验证恢复控制流程，不等于重现用户网络中的 Google 连接重置，也不能保证所有登录失败均能恢复。
+
+复现步骤（先按[构建文档](MAINTENANCE.md)准备 JDK、SDK、依赖与原生缓存）：
+
+```powershell
+# 先核实设备；所有后续命令都指定同一序列号。
+adb devices -l
+adb -s emulator-5554 shell getprop ro.boot.qemu.avd_name
+./gradlew.bat --offline :app:testX64DebugUnitTest
+
+# 显式启用专用 :login 测试进程；测试入口只存在于 androidTest APK。
+./gradlew.bat --offline -PpgLoginRecoveryTests=true :app:assembleX64Debug :app:assembleX64DebugAndroidTest
+adb -s emulator-5554 install -r app/build/outputs/apk/x64/debug/app-x64-debug.apk
+adb -s emulator-5554 install -r app/build/outputs/apk/androidTest/x64/debug/app-x64-debug-androidTest.apk
+adb -s emulator-5554 shell am instrument -w -r -e class dev.pgproxy.app.LoginRecoveryInstrumentedTest dev.pgproxy.app.test/dev.pgproxy.app.LoginRecoveryTestRunner
+```
+
+报告为应用私有目录的 `files/validation/login-recovery.json`，其中 `testProfileId` 标识本次合成登录资料。先保存报告和同目录截图，再停止测试进程；需要清理时只处理该 ID 对应的测试 profile，不清除应用全部数据。登录测试以专用 runner 完成结果回传，宿主随后执行 `adb -s emulator-5554 shell am force-stop dev.pgproxy.app`。该命令也会停止正在运行的代理服务，应在专用测试环境执行。
+
+常规测试须重新构建并安装**不带** `-PpgLoginRecoveryTests=true` 的测试 APK；默认 runner 仍是主进程 `AndroidJUnitRunner`，避免将其他测试误放入登录进程。原始输出与截图保存在 Git 忽略的 `artifacts/login-recovery/`。
 
 ## 0.3.0 · 2026-10-30 代码审查修复
 
@@ -143,9 +204,11 @@ HTTP 测试通过 **ADB 端口转发**访问模拟器中 APK 的服务，没有�
 .venv\Scripts\python.exe -m pytest -q --junitxml=artifacts\python-tests.xml
 .venv\Scripts\python.exe tools\collect_licenses.py --check
 .venv\Scripts\python.exe tools\build_app.py --skip-native-build --tests --test-abi x86_64 --offline
-adb -s emulator-5556 install -r artifacts\PG-Proxy-0.3.0-x86_64.apk
-adb -s emulator-5556 install -r artifacts\PG-Proxy-0.3.0-x86_64-androidTest.apk
-adb -s emulator-5556 shell am instrument -w -e class 'dev.pgproxy.app.UIInstrumentedTest,dev.pgproxy.app.ProfileStorageIoInstrumentedTest,dev.pgproxy.app.ReviewRegressionInstrumentedTest' dev.pgproxy.app.test/androidx.test.runner.AndroidJUnitRunner
+adb devices -l
+adb -s emulator-5554 shell getprop ro.boot.qemu.avd_name
+adb -s emulator-5554 install -r artifacts\PG-Proxy-0.3.1-x86_64.apk
+adb -s emulator-5554 install -r artifacts\PG-Proxy-0.3.1-x86_64-androidTest.apk
+adb -s emulator-5554 shell am instrument -w -e class 'dev.pgproxy.app.UIInstrumentedTest,dev.pgproxy.app.ProfileStorageIoInstrumentedTest,dev.pgproxy.app.ReviewRegressionInstrumentedTest' dev.pgproxy.app.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 请检查 instrumentation 输出中的 `OK` / `FAILURES`，不要只看 adb 的进程退出码。不要直接运行整个测试包：`LiveAccountInstrumentedTest` 与 `BrowserImportedAccountInstrumentedTest` 涉及真实账号及生成。更多原生、进程恢复和后台用例命令见[维护文档](MAINTENANCE.md)。
@@ -163,9 +226,9 @@ adb -s emulator-5556 shell am instrument -w -e class 'dev.pgproxy.app.UIInstrume
 由用户在应用内完成登录和网站确认，先检查凭证，再启动 API。使用设置中保存的端口，下例按新安装默认值 `8888`：
 
 ```powershell
-adb -s emulator-5556 forward tcp:18080 tcp:8888
+adb -s emulator-5554 forward tcp:18080 tcp:8888
 .venv\Scripts\python.exe tools\e2e_app.py --base-url http://127.0.0.1:18080 --connection-file artifacts\private-connection.json --live --output artifacts\http-e2e.json
-adb -s emulator-5556 forward --remove tcp:18080
+adb -s emulator-5554 forward --remove tcp:18080
 ```
 
 私有连接文件仅包含 `apiKey` 和可选的 `model`，放在 Git 忽略目录，不发到聊天或公开报告。工具访问 APK 中运行的服务；即使不加 `--live`，也会查询真实模型目录，因此不是离线测试。`--live` 会消耗生成额度。真实 proof 的服务端接受、流式内容与资源清理应一起记录，不能仅凭 `/health` 成功判断。

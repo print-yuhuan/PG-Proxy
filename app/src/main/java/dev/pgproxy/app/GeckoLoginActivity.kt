@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.WindowInsets
 import android.widget.FrameLayout
+import android.widget.Toast
 import org.json.JSONObject
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
@@ -29,6 +30,7 @@ class GeckoLoginActivity : Activity() {
         const val EXTRA_LABEL = "label"
         const val EXTRA_EXISTING_ACCOUNT = "existingAccount"
         private const val EXTENSION = "session-bridge@pgproxy.local"
+        private const val RECOVERY_TIMEOUT_MS = 30_000L
         private var runtimeCreated = false
 
         internal fun loginSessionSettings(): GeckoSessionSettings = GeckoSessionSettings.Builder().build()
@@ -56,6 +58,17 @@ class GeckoLoginActivity : Activity() {
     private var ownsRuntime = false
     private var extension: WebExtension? = null
     private var errorDialog: AlertDialog? = null
+    private val recovery = LoginRecoveryPolicy()
+    private var recoveryNavigationIssued = false
+    private var recoveryPageStarted = false
+    private var recoveryOriginUri: String? = null
+    private var recoveryToast: Toast? = null
+    private var recoveryNavigation: Runnable? = null
+    private val recoveryTimeout = Runnable {
+        if (recovery.isRecovering && session?.let(::acceptsPageEvents) == true && !errorShown) {
+            showLoadError(HOME, null, recoveryFailed = true)
+        }
+    }
     private val deletionWatch = object : Runnable {
         override fun run() {
             if (closing) return
@@ -151,6 +164,7 @@ class GeckoLoginActivity : Activity() {
             override fun onLocationChange(s: GeckoSession, url: String?, permissions: MutableList<GeckoSession.PermissionDelegate.ContentPermission>, gesture: Boolean) {
                 if (!acceptsPageEvents(s)) return
                 page = url.orEmpty()
+                recovery.observeNavigation(url)
                 val uri = Uri.parse(page)
                 if (uri.host == "accounts.google.com" &&
                     (uri.path.orEmpty().contains("rejected", true) || uri.getQueryParameter("error") == "disallowed_useragent")) {
@@ -163,15 +177,22 @@ class GeckoLoginActivity : Activity() {
                 if (importing || imported || closing || isFinishing || isDestroyed) return GeckoResult.fromValue(AllowOrDeny.DENY)
                 val permitted = allowed(request.uri)
                 if (!permitted) recordDenied(request.uri)
+                else if (acceptsPageEvents(s)) recovery.observeNavigation(request.uri)
                 return GeckoResult.fromValue(if (permitted) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
             }
             override fun onLoadError(s: GeckoSession, uri: String?, error: WebRequestError): GeckoResult<String>? {
-                if (acceptsPageEvents(s)) {
+                if (acceptsPageEvents(s) && !errorShown) {
+                    // A failed navigation can report the same reset more than once.
+                    // Ignore only the old reset while HOME has not started; security
+                    // errors and failures of HOME itself must still be reported.
+                    if (recovery.isRecovering && !recoveryPageStarted && uri == recoveryOriginUri &&
+                        (!recoveryNavigationIssued || uri != HOME) && isConnectionReset(error)) return null
                     loaded = false
                     secure = false
-                    stage("page_load_error")
                     GeckoProfiles.recordLoadError(this@GeckoLoginActivity, error.category, error.code)
-                    showLoadError(uri, error)
+                    if (!tryRecoverLogin(s, uri, error)) {
+                        showLoadError(uri, error, recoveryFailed = recovery.isRecovering)
+                    }
                 }
                 // Never install certificate exceptions or retry without HTTPS verification.
                 return null
@@ -179,6 +200,7 @@ class GeckoLoginActivity : Activity() {
             override fun onNewSession(old: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
                 if (!acceptsPageEvents(old)) return null
                 if (!allowed(uri)) { recordDenied(uri); return null }
+                recovery.observeNavigation(uri)
                 val popup = newSession()
                 session = popup
                 loaded = false; secure = false; epoch++
@@ -187,10 +209,18 @@ class GeckoLoginActivity : Activity() {
             }
         }
         next.progressDelegate = object : GeckoSession.ProgressDelegate {
-            override fun onPageStart(s: GeckoSession, url: String) { if (acceptsPageEvents(s)) { loaded = false; secure = false; epoch++; stage("loading_page") } }
+            override fun onPageStart(s: GeckoSession, url: String) {
+                if (!acceptsPageEvents(s)) return
+                loaded = false; secure = false; epoch++
+                recovery.observeNavigation(url)
+                if (recovery.isRecovering && recoveryNavigationIssued) recoveryPageStarted = true
+                if (!errorShown) stage(if (recovery.isRecovering) "recovering_playground" else "loading_page")
+            }
             override fun onPageStop(s: GeckoSession, success: Boolean) {
                 if (acceptsPageEvents(s)) {
+                    if (recovery.isRecovering && !recoveryPageStarted) return
                     loaded = success
+                    if (success) finishRecovery()
                     if (!errorShown) stage(if (!success) "page_error" else if (Uri.parse(page).host == "aistudio.google.com") "waiting_for_prompt" else "waiting_for_google_login")
                 }
             }
@@ -222,15 +252,69 @@ class GeckoLoginActivity : Activity() {
         GeckoProfiles.recordDeniedNavigation(this, host, reason, googleHost)
     }
 
-    private fun showLoadError(uri: String?, error: WebRequestError) {
+    private fun isConnectionReset(error: WebRequestError): Boolean =
+        error.category == WebRequestError.ERROR_CATEGORY_NETWORK && error.code == WebRequestError.ERROR_NET_RESET
+
+    private fun tryRecoverLogin(source: GeckoSession, uri: String?, error: WebRequestError): Boolean {
+        if (!recovery.tryStartRecovery(uri, isConnectionReset(error))) return false
+        loaded = false; secure = false; epoch++
+        recoveryNavigationIssued = false
+        recoveryPageStarted = false
+        recoveryOriginUri = uri
+        stage("recovering_playground")
+        recoveryToast = Toast.makeText(this, "登录连接中断，正在尝试打开 Playground…", Toast.LENGTH_SHORT)
+            .also { it.show() }
+        // Leave Gecko's error callback before navigating, keeping the same session/profile.
+        recoveryNavigation = Runnable {
+            recoveryNavigation = null
+            if (!recovery.isRecovering || !acceptsPageEvents(source) || errorShown) {
+                finishRecovery()
+                return@Runnable
+            }
+            recoveryNavigationIssued = true
+            runCatching { source.loadUri(HOME) }.onFailure {
+                showPageError(HOME, "未能发起 Playground 页面加载。请返回凭证页继续登录，或稍后重试。", true)
+            }
+        }.also { main.post(it) }
+        main.postDelayed(recoveryTimeout, RECOVERY_TIMEOUT_MS)
+        return true
+    }
+
+    private fun finishRecovery() {
+        recoveryNavigation?.let { main.removeCallbacks(it) }
+        recoveryNavigation = null
+        main.removeCallbacks(recoveryTimeout)
+        recoveryToast?.cancel()
+        recoveryToast = null
+        recovery.markRecoveryFinished()
+        recoveryNavigationIssued = false
+        recoveryPageStarted = false
+        recoveryOriginUri = null
+    }
+
+    private fun showLoadError(uri: String?, error: WebRequestError?, recoveryFailed: Boolean = false) {
+        val message = when {
+            error == null -> "自动打开 Playground 后，30 秒内仍未完成页面加载。请检查网络连接后重试。"
+            error.category == WebRequestError.ERROR_CATEGORY_SECURITY ->
+                "网站安全连接验证未通过。请检查网络和系统时间；重试仍会验证证书，不会忽略安全错误。"
+            isConnectionReset(error) ->
+                "与登录网站的连接被重置。请检查网络或代理连接后重试；此错误不代表账号或密码有误。"
+            else -> "页面未能完成加载。请检查网络连接后重试。"
+        }
+        val detail = error?.let { "\n错误分类 ${it.category} · 错误代码 ${it.code}" }.orEmpty()
+        showPageError(uri, message + detail, recoveryFailed)
+    }
+
+    private fun showPageError(uri: String?, message: String, recoveryFailed: Boolean) {
         if (errorShown || importing || imported || closing || isFinishing || isDestroyed) return
+        finishRecovery()
         errorShown = true
+        loaded = false; secure = false; epoch++
+        stage(if (recoveryFailed) "playground_recovery_failed" else "page_load_error")
         val retry = uri?.takeIf(::allowed)
-        val message = if (error.category == WebRequestError.ERROR_CATEGORY_SECURITY)
-            "网站安全连接验证未通过。重试仍会验证证书，不会忽略安全错误。"
-        else "页面未能完成加载。登录会话已保留，可以重试或稍后从凭证页继续。"
-        errorDialog = AlertDialog.Builder(this).setTitle("页面暂时无法打开")
-            .setMessage(message + "\n错误分类 ${error.category} · 错误代码 ${error.code}")
+        val explanation = if (recoveryFailed) "已自动尝试打开 Playground，仍未能继续登录。\n" else ""
+        errorDialog = AlertDialog.Builder(this).setTitle(if (recoveryFailed) "暂时无法恢复登录" else "页面暂时无法打开")
+            .setMessage(explanation + message + "\n浏览器会话已保留，可以重试或返回凭证页继续登录。")
             .setPositiveButton(if (retry != null) "重试当前页面" else "打开 Playground") { _, _ ->
                 errorShown = false
                 session?.loadUri(retry ?: HOME)
@@ -260,6 +344,8 @@ class GeckoLoginActivity : Activity() {
             return
         }
         importing = true
+        finishRecovery()
+        recovery.disable()
         stage("importing")
         (application as BrowserLoginHost).importSession(accountId, label, json) { success, messageText ->
             if (success) GeckoProfiles.confirmImport(this, accountId)
@@ -283,6 +369,7 @@ class GeckoLoginActivity : Activity() {
 
     private fun fail(title: String, text: String) {
         if (errorShown || imported || closing || isFinishing || isDestroyed) return
+        finishRecovery()
         errorShown = true
         errorDialog = AlertDialog.Builder(this).setTitle(title).setMessage(text).setPositiveButton("返回") { _, _ -> finish() }
             .setOnCancelListener { finish() }.show()
@@ -291,6 +378,7 @@ class GeckoLoginActivity : Activity() {
     override fun onPause() { active = false; super.onPause() }
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        finishRecovery()
         // The durable import journal lets the main activity reconcile a late IPC result.
         if (importing) finish() else if (canGoBack) session?.goBack() else finish()
     }
@@ -301,8 +389,10 @@ class GeckoLoginActivity : Activity() {
             super.onDestroy()
             return
         }
+        finishRecovery()
         main.removeCallbacksAndMessages(null)
         closing = true
+        recovery.disable()
         runCatching { errorDialog?.dismiss() }
         errorDialog = null
         runCatching { extension?.setMessageDelegate(null, "pgproxy_bridge") }

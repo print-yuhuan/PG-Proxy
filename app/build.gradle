@@ -4,6 +4,13 @@ plugins {
     id 'com.chaquo.python'
 }
 
+// Recovery instrumentation must run explicitly in Gecko's disposable process.
+// Ordinary test builds retain AndroidJUnitRunner in the app's main process.
+def pgLoginRecoveryTests = providers.gradleProperty('pgLoginRecoveryTests')
+    .map { it.equalsIgnoreCase('true') }.getOrElse(false)
+def pgInstrumentationRunner = pgLoginRecoveryTests ?
+    'dev.pgproxy.app.LoginRecoveryTestRunner' : 'androidx.test.runner.AndroidJUnitRunner'
+
 // Signing identity is local release configuration, never a checked-in secret.
 def releaseSigningVariables = [
     storeFile: 'PG_SIGNING_STORE_FILE', storePassword: 'PG_SIGNING_STORE_PASSWORD',
@@ -54,9 +61,13 @@ android {
         applicationId 'dev.pgproxy.app'
         minSdk 28
         targetSdk 35
-        versionCode 30
-        versionName '0.3.0'
-        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        versionCode 31
+        versionName '0.3.1'
+        testInstrumentationRunner pgInstrumentationRunner
+        manifestPlaceholders += [
+            pgTestRunner: pgInstrumentationRunner,
+            pgTestProcesses: pgLoginRecoveryTests ? 'dev.pgproxy.app:login' : 'dev.pgproxy.app'
+        ]
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     buildFeatures { compose true; buildConfig true }

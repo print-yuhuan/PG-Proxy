@@ -1,6 +1,6 @@
 # 后台运行
 
-PG Proxy 0.3.0 使用前台服务和运行通知，并提供电池设置引导与可选的 CPU 唤醒锁。这些措施可以减少后台中断，但仍受 Android 和厂商电源策略限制；用户强制停止应用后，需要重新打开并启动服务。下文的设备记录保留其实际测试阶段，不能视为当前版本已经重复完成相同验收。
+PG Proxy 0.3.1 使用前台服务和运行通知，并提供电池设置引导与可选的 CPU 唤醒锁。这些措施可以减少后台中断，但仍受 Android 和厂商电源策略限制；用户强制停止应用后，需要重新打开并启动服务。下文的设备记录保留其实际测试阶段，不能视为当前版本已经重复完成相同验收。
 
 ## 推荐设置
 
@@ -65,14 +65,16 @@ PG Proxy 0.3.0 使用前台服务和运行通知，并提供电池设置引导�
 
 ### 复现后台测试
 
-先按[构建与维护](MAINTENANCE.md)生成主 APK 与测试 APK，再选择测试类运行。以下按当前 0.3.0 构建文件名举例，设备编号应替换为自己的模拟器编号；实际执行范围与结果应单独记录，不因使用相同命令就沿用已有验收：
+先按[构建与维护](MAINTENANCE.md)生成主 APK 与测试 APK，再选择测试类运行。以下按当前 0.3.1 构建文件名举例，设备编号应替换为自己的模拟器编号；实际执行范围与结果应单独记录，不因使用相同命令就沿用已有验收：
 
 ```powershell
 cd D:\PG-Proxy
 .venv\Scripts\python.exe -m pytest -q
-adb -s emulator-5556 install -r artifacts\PG-Proxy-0.3.0-x86_64.apk
-adb -s emulator-5556 install -r artifacts\PG-Proxy-0.3.0-x86_64-androidTest.apk
-adb -s emulator-5556 shell am instrument -w -e class 'dev.pgproxy.app.UIInstrumentedTest,dev.pgproxy.app.WakeLockInstrumentedTest,dev.pgproxy.app.BackgroundSettingsInstrumentedTest,dev.pgproxy.app.BackgroundRuntimeInstrumentedTest,dev.pgproxy.app.ForegroundStateInstrumentedTest,dev.pgproxy.app.RuntimeInstrumentedTest,dev.pgproxy.app.ProxyConnectorInstrumentedTest' dev.pgproxy.app.test/androidx.test.runner.AndroidJUnitRunner
+adb devices -l
+adb -s emulator-5554 shell getprop ro.boot.qemu.avd_name
+adb -s emulator-5554 install -r artifacts\PG-Proxy-0.3.1-x86_64.apk
+adb -s emulator-5554 install -r artifacts\PG-Proxy-0.3.1-x86_64-androidTest.apk
+adb -s emulator-5554 shell am instrument -w -e class 'dev.pgproxy.app.UIInstrumentedTest,dev.pgproxy.app.WakeLockInstrumentedTest,dev.pgproxy.app.BackgroundSettingsInstrumentedTest,dev.pgproxy.app.BackgroundRuntimeInstrumentedTest,dev.pgproxy.app.ForegroundStateInstrumentedTest,dev.pgproxy.app.RuntimeInstrumentedTest,dev.pgproxy.app.ProxyConnectorInstrumentedTest' dev.pgproxy.app.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 设备用例会临时启停服务、短时熄屏，随后恢复配置和运行状态。运行期间请暂停生成任务；长期锁屏、强制 Doze 和实际耗电需要另行测试。
