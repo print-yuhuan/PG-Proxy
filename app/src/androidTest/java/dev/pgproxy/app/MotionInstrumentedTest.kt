@@ -104,8 +104,10 @@ class MotionInstrumentedTest {
     private fun visible(tag: String, page: String) = run {
         compose.mainClock.autoAdvance = true
         try {
-            compose.onNodeWithTag("page_$page").performScrollToNode(hasTestTag(tag))
-            compose.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
+            // Log-code tags are children of the row's merged click target.
+            val unmerged = tag.startsWith("log_code_")
+            compose.onNodeWithTag("page_$page", useUnmergedTree = unmerged).performScrollToNode(hasTestTag(tag))
+            compose.onNodeWithTag(tag, useUnmergedTree = unmerged).performScrollTo().assertIsDisplayed()
         } finally {
             compose.mainClock.autoAdvance = false
         }

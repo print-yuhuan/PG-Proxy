@@ -1,6 +1,5 @@
 """Private Android bridge entry point; account management is never an HTTP route."""
 import asyncio
-from collections import deque
 import contextlib
 import importlib.metadata
 import json
@@ -18,6 +17,7 @@ from .waa import AndroidWAA
 from .request_statistics import RequestStatistics
 from .request_guard import MAX_HTTP_CONCURRENCY
 from .network_info import NetworkInfo
+from .request_logging import LogStore
 
 
 class Controller:
@@ -37,9 +37,9 @@ class Controller:
                                 'timeout':180,'queueTimeout':30,'keepAwake':False,**config}
         if type(self.state['config']['keepAwake']) is not bool:
             raise ValueError('Unsupported encrypted background configuration')
-        self.logs = deque(maxlen=100)
         self.request_statistics = RequestStatistics()
         self.network_info = NetworkInfo()
+        self.logs = LogStore(network_snapshot=self.network_info.cached_snapshot)
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self._run,name='PGProxyPython',daemon=True)
         self.server = None
@@ -64,7 +64,7 @@ class Controller:
         self.bridge.saveState(json.dumps(self.state,separators=(',',':')))
 
     def _log(self, event):
-        self.logs.append({'at':time.time(),'event':event})
+        self.logs.event(event)
 
     def snapshot(self):
         config = self.state['config']
@@ -78,7 +78,7 @@ class Controller:
         return {'version':VERSION,'running':bool(self.server and self.server.started and
                     self.server_task and not self.server_task.done()),
                 'host':'0.0.0.0' if config['lan'] else '127.0.0.1',
-                **config,'accounts':accounts,'logs':list(self.logs),**self.request_statistics.snapshot()}
+                **config,'accounts':accounts,'logs':self.logs.snapshot(),**self.request_statistics.snapshot()}
 
     def call(self, action, payload_json='{}'):
         """Call off the Android UI thread. Results intentionally omit exception traces."""
@@ -101,6 +101,16 @@ class Controller:
         try:
             if action == 'snapshot':
                 return {'ok':True,'result':self.snapshot()}
+            if action == 'log_detail':
+                entry_id = payload.get('id')
+                if set(payload) != {'id'} or not isinstance(entry_id,str) or not 1 <= len(entry_id) <= 64:
+                    return {'ok':False,'error':{'status':400,'code':'invalid_request',
+                                               'message':'日志标识格式不正确，请返回日志列表重新选择。'}}
+                entry = self.logs.detail(entry_id)
+                if entry is None:
+                    return {'ok':False,'error':{'status':404,'code':'log_not_found',
+                                               'message':'该日志已被新记录替换，或服务进程已重建。请返回列表查看最近记录。'}}
+                return {'ok':True,'result':entry}
             if action == 'network_info':
                 force = payload.get('force',False)
                 if type(force) is not bool or set(payload)-{'force'}:
@@ -214,7 +224,8 @@ class Controller:
             raise PlaygroundError('Port is unavailable; choose another port',503,'port_unavailable') from None
         self.listener = listener
         self.server = uvicorn.Server(uvicorn.Config(create_app(self.pool,close_on_shutdown=False,
-                                                              request_statistics=self.request_statistics),
+                                                              request_statistics=self.request_statistics,
+                                                              request_logs=self.logs),
             host='0.0.0.0' if config['lan'] else '127.0.0.1',port=config['port'],
             loop='asyncio',http='h11',ws='none',lifespan='on',access_log=False,log_config=None,
             timeout_graceful_shutdown=3,limit_concurrency=MAX_HTTP_CONCURRENCY))

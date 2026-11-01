@@ -151,8 +151,13 @@ class UIInstrumentedTest {
         compose.onNodeWithTag("page_$page").assertIsDisplayed()
     }
 
-    private fun visible(tag: String, page: String) = compose.onNodeWithTag("page_$page")
-        .performScrollToNode(hasTestTag(tag)).let { compose.onNodeWithTag(tag) }
+    private fun visible(tag: String, page: String) = run {
+        // A whole log row is now one accessible click target. Its code remains
+        // a child tag for these assertions, so inspect the unmerged tree.
+        val unmerged = tag.startsWith("log_code_")
+        compose.onNodeWithTag("page_$page", useUnmergedTree = unmerged)
+            .performScrollToNode(hasTestTag(tag)).let { compose.onNodeWithTag(tag, useUnmergedTree = unmerged) }
+    }
 
     private fun field(tag: String, value: String) = visible(tag, "settings").performScrollTo().performTextReplacement(value)
 
@@ -350,17 +355,17 @@ class UIInstrumentedTest {
         navigate("logs")
         visible("logs_filter_error", "logs").performScrollTo().performClick()
         visible("log_code_waa_unavailable", "logs").assertIsDisplayed()
-        compose.onNodeWithTag("log_code_service_started").assertDoesNotExist()
-        compose.onNodeWithTag("log_code_rate_limit").assertDoesNotExist()
+        compose.onNodeWithTag("log_code_service_started", useUnmergedTree = true).assertDoesNotExist()
+        compose.onNodeWithTag("log_code_rate_limit", useUnmergedTree = true).assertDoesNotExist()
         visible("logs_filter_warning", "logs").performScrollTo().performClick()
         visible("log_code_rate_limit", "logs").assertIsDisplayed()
-        compose.onNodeWithTag("log_code_waa_unavailable").assertDoesNotExist()
+        compose.onNodeWithTag("log_code_waa_unavailable", useUnmergedTree = true).assertDoesNotExist()
         visible("logs_filter_info", "logs").performScrollTo().performClick()
         visible("log_code_service_started", "logs").assertIsDisplayed()
         visible("logs_filter_all", "logs").performScrollTo().performClick()
         visible("logs_search", "logs").performTextReplacement("校验运行环境")
         visible("log_code_waa_unavailable", "logs").assertIsDisplayed()
-        compose.onNodeWithTag("log_code_service_started").assertDoesNotExist()
+        compose.onNodeWithTag("log_code_service_started", useUnmergedTree = true).assertDoesNotExist()
         visible("logs_copy", "logs").performClick()
         compose.runOnIdle {
             assertEquals(1, copied.size)
@@ -376,7 +381,7 @@ class UIInstrumentedTest {
         navigate("overview")
         compose.runOnIdle { state = state.copy(logs = state.logs + UiLogEvent(1_780_000_004.0, "account_disabled")) }
         navigate("logs")
-        compose.onNodeWithTag("log_code_account_disabled").assertDoesNotExist()
+        compose.onNodeWithTag("log_code_account_disabled", useUnmergedTree = true).assertDoesNotExist()
         visible("logs_pause", "logs").performClick()
         visible("log_code_account_disabled", "logs").assertIsDisplayed()
     }

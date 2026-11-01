@@ -11,6 +11,7 @@ from .playground_client import PlaygroundClient
 from .session import BridgeSession, GoogleSession
 from .waa import AndroidWAA
 from .model_catalog import merge_model_entries
+from .request_logging import record_credential_issue, set_stage
 
 
 class AccountPool:
@@ -74,6 +75,7 @@ class AccountPool:
 
     @asynccontextmanager
     async def queued(self):
+        set_stage('queue')
         try:
             await asyncio.wait_for(self.gate.acquire(),self.settings.queue_timeout)
         except asyncio.TimeoutError:
@@ -90,6 +92,9 @@ class AccountPool:
                 and r.get('cooldownUntil',0) <= now]
 
     def failed(self, record, error):
+        # Directory aggregation can continue with a different credential. Keep
+        # this attempt visible without marking a later successful call failed.
+        record_credential_issue(error,record['id'])
         if record['id'] in self.state['deletedAccountIds']:
             return
         record['lastError'] = error.code
@@ -109,12 +114,14 @@ class AccountPool:
         self.persist()
 
     async def _catalog(self, record):
+        set_stage('model_catalog')
         catalog = await self.client(record).models()
         record['modelCount'] = len(catalog)
         return catalog
 
     async def models(self):
         async with self.queued():
+            set_stage('credential')
             result = {}
             candidates = self.eligible()
             last = None
@@ -134,6 +141,7 @@ class AccountPool:
             return result
 
     async def _select(self, model, advance=True):
+        set_stage('credential')
         candidates = self.eligible()
         if not candidates:
             raise PlaygroundError('No enabled account is available; add or check an account',503,'no_available_account')

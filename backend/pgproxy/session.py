@@ -8,6 +8,7 @@ import time
 from urllib.parse import urlparse
 from .config import ORIGIN
 from .errors import PlaygroundError
+from .request_logging import register_secrets
 
 
 def google_domain(domain):
@@ -64,6 +65,7 @@ class GoogleSession:
                 raise ValueError()
             self.state = {'cookies':cookies,'origins':origins,
                           'browserMetadata':{'language':language} if language else {}}
+            register_secrets(*(cookie['value'] for cookie in cookies))
             self.authorization()
         except FileNotFoundError:
             raise PlaygroundError('Google session missing. Sign in using the Accounts page.', 503, 'session_required') from None
@@ -97,10 +99,17 @@ class GoogleSession:
         for label, name in [('SAPISIDHASH','SAPISID'), ('SAPISID1PHASH','__Secure-1PAPISID'), ('SAPISID3PHASH','__Secure-3PAPISID')]:
             value = cookies.get(name)
             if not value:
-                raise PlaygroundError('Google session is expired or missing required signing cookies. Re-import a fresh session.', 503, 'session_required')
+                error = PlaygroundError('Google session is expired or missing required signing cookies. Re-import a fresh session.', 503, 'session_required')
+                expired = any(c.get('name')==name and 0<=float(c.get('expires',-1))<=stamp
+                              for c in self.state['cookies'])
+                error.diagnostic_raw = ('Google signing cookie has expired: ' if expired
+                                        else 'Google session is missing required signing cookie: ')+name
+                raise error
             digest = hashlib.sha1(f'{stamp} {value} {ORIGIN}'.encode()).hexdigest()
             parts.append(f'{label} {stamp}_{digest}')
-        return ' '.join(parts)
+        authorization = ' '.join(parts)
+        register_secrets(authorization,*(cookies.values()))
+        return authorization
 
     def install(self, jar):
         for c in self.state['cookies']:

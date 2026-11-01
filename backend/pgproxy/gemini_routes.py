@@ -4,22 +4,29 @@ from .errors import PlaygroundError
 from .playground_protocol import public_model
 from .responses import generation_response
 from .model_catalog import find_model, paginate_models
+from .request_logging import record_parameters, set_stage
 
 router = APIRouter(dependencies=[Depends(authenticate_user)])
 
 
 @router.get('/v1beta/models')
 async def list_models(request: Request):
+    set_stage('model_catalog')
     return paginate_models(await request.app.state.playground.models(),
         request.query_params.get('pageSize'),request.query_params.get('pageToken'))
 
 
 @router.get('/v1beta/models/{model}')
 async def model_detail(request: Request, model: str):
+    record_parameters({'model': model})
+    set_stage('model_catalog')
     return public_model(find_model(await request.app.state.playground.models(),model))
 
 
 async def generate(request: Request, model: str, action: str, body: dict = Body(...)):
+    set_stage('parameters')
+    record_parameters(body)
+    record_parameters({'model': model, 'stream': action == 'streamGenerateContent'})
     if action=='countTokens':
         return await request.app.state.playground.count_tokens(model,body)
     if action not in ('generateContent','streamGenerateContent'):

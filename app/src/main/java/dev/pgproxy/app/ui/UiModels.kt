@@ -6,7 +6,17 @@ data class AccountUi(
     val modelCount: Int = 0, val cooldownSeconds: Int = 0, val active: Boolean = false,
 )
 data class PendingLoginUi(val id: String, val label: String)
-data class UiLogEvent(val at: Double, val code: String)
+/** Public log summaries are already redacted by the backend; details are loaded separately. */
+data class UiLogEvent(
+    val at: Double, val code: String,
+    val id: String = "", val level: String = "", val title: String = "", val summary: String = "",
+    val method: String = "", val path: String = "", val status: Int? = null, val durationMs: Double? = null,
+    val credentialIssue: Boolean = false, val outcome: String = "", val errorCode: String = "", val failureType: String = "",
+)
+data class LogDetailField(val label: String, val value: String, val monospace: Boolean = false)
+data class LogDetailSection(val title: String, val fields: List<LogDetailField>, val warning: Boolean = false)
+data class LogDetailUi(val title: String, val summary: String, val sections: List<LogDetailSection>, val exportText: String)
+data class LogDetailResult(val data: LogDetailUi? = null, val error: String = "")
 data class ServiceSettings(val port: Int, val lan: Boolean, val apiKey: String, val timeout: Int,
     val queueTimeout: Int, val keepAwake: Boolean = false)
 
@@ -44,4 +54,7 @@ data class UiActions(
     val onOpenQqGroup: (String) -> Unit = {},
     val onOpenNotificationSettings: () -> Unit = {}, val onOpenBatterySettings: () -> Unit = {},
     val onOpenAppSettings: () -> Unit = {},
+    val onLoadLogDetail: (String, (LogDetailResult) -> Unit) -> Unit = { _, callback ->
+        callback(LogDetailResult(error = "日志详情暂不可用，请稍后重试。"))
+    },
 )

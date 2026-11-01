@@ -7,6 +7,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .auth import authenticate_user
+from .request_logging import record_error, set_stage
 
 
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
@@ -40,8 +41,10 @@ class RequestGuardMiddleware:
         request = Request(scope)
         payload = None
         try:
+            set_stage('authentication')
             authenticate_user(request)
             if scope['method'] == 'POST':
+                set_stage('request_body')
                 lengths = request.headers.getlist('content-length')
                 if lengths:
                     value = lengths[0]
@@ -76,6 +79,7 @@ class RequestGuardMiddleware:
                 if payload is None:
                     return
         except HTTPException as error:
+            record_error(error)
             headers = dict(error.headers or {})
             # An early response must not reuse an HTTP/1 connection whose body
             # remains unread. Uvicorn applies transport flow control meanwhile.
@@ -100,4 +104,5 @@ class RequestGuardMiddleware:
                 return message
             return await receive()
 
+        set_stage('routing')
         await self.app(scope, replay, send)
