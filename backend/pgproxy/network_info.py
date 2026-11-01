@@ -23,6 +23,68 @@ _MAX_BODY = 64 * 1024
 _CACHE_SECONDS = 300
 _ROUND_INTERVAL = 10
 
+# This is the documented regional snapshot, not a live Google eligibility check.
+_REGION_SNAPSHOT_DATE = '2026-10-29'
+_UNSUPPORTED_REGION_HINTS = frozenset({'CN','HK','MO','KP','IR','SY','RU','BY'})
+_RISK_HINT_THRESHOLD = 75  # Local troubleshooting heuristic, not Google's policy.
+
+
+def diagnose_failure(snapshot, failure_type, stage):
+    """Annotate a failure using the existing overview cache, without any I/O.
+
+    Provider observations may use a different route from Google. Neither a region
+    nor a risk score is proof of the cause of an individual request failure.
+    """
+    snapshot = snapshot if isinstance(snapshot,dict) else {}
+    source = snapshot.get('data')
+    hints = []
+    data = None
+    stale = True
+    relevant = failure_type in {
+        'connection','timeout','upstream_5xx','permission','credential_invalid',
+        'protocol','waa','upstream_authentication_error',
+    } and stage not in {'received','authentication','request_body','parameters','routing','queue'}
+    if isinstance(source,dict):
+        data = {key:_text(source.get(key),128) for key in (
+            'countryCode','country','region','organization','networkType','source')}
+        # Keep enough of the address to recognise an egress change without copying
+        # the user's complete public IP into exported troubleshooting logs.
+        try:
+            address = ipaddress.ip_address(source.get('ip',''))
+            if address.version == 4:
+                data['ip'] = '.'.join(str(address).split('.')[:2])+'.*.*'
+            else:
+                data['ip'] = ':'.join(address.exploded.split(':')[:3])+':…'
+        except ValueError:
+            data['ip'] = '[未提供]'
+        updated = source.get('updatedAt')
+        if type(updated) in (int,float) and 0 < updated <= time.time()+60:
+            data['updatedAt'] = updated
+            data['ageSeconds'] = max(0,int(time.time()-updated))
+            stale = data['ageSeconds'] > _CACHE_SECONDS
+        score = source.get('riskScore')
+        data['riskScore'] = score if type(score) is int and 0 <= score <= 100 else None
+        flags = source.get('riskFlags')
+        data['riskFlags'] = [flag for flag in ('proxy','vpn','tor','abuser')
+                             if isinstance(flags,list) and flag in flags]
+        if stale:
+            hints.append('网络快照已超过 5 分钟或缺少时间信息；请在概览页刷新后核对当前出口。')
+        if relevant and data['countryCode'] in _UNSUPPORTED_REGION_HINTS:
+            hints.append(f"该快照地区 {data['countryCode']} 不在 {_REGION_SNAPSHOT_DATE} 核对的 AI Studio 支持区域列表中；请核对当前 Google 官方区域说明与实际出口。")
+        if relevant and data['riskScore'] is not None and data['riskScore'] >= _RISK_HINT_THRESHOLD:
+            hints.append(f"查询服务风险分为 {data['riskScore']}/100，达到本项目的排查提示阈值 {_RISK_HINT_THRESHOLD}；这不是 Google 的封禁阈值，也不能据此确认本次失败原因。")
+        if relevant and not hints:
+            hints.append('网络快照未命中本项目的地区或高风险提示条件，仍不能据此证明 Google 连接、账号权限或请求校验可用。')
+    else:
+        hints.append('暂无概览页网络快照；如需排查上游连接，请到概览页获取网络信息。')
+    if not relevant:
+        hints.append('本次错误应优先依据接口状态码、凭证状态或参数提示处理；不将地区或风险分认定为原因。')
+    return {
+        'data':data,'stale':stale,'hints':hints,
+        'lookupError':_text(snapshot.get('error'),256),
+        'note':'以下为失败时已有的网络缓存，未额外发起查询。查询服务与 Google 可能使用不同出口；提示仅用于排查。',
+    }
+
 
 def _text(value, limit=128):
     if not isinstance(value,str):
@@ -141,6 +203,10 @@ class NetworkInfo:
 
     def _result(self, error=None):
         return {'data':copy.deepcopy(self._data),'error':self._error if error is None else error}
+
+    def cached_snapshot(self):
+        """Read-only diagnostic view; never refreshes or waits for the provider."""
+        return self._result()
 
     async def get(self, force=False):
         if type(force) is not bool:

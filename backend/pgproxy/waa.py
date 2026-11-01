@@ -12,6 +12,7 @@ import uuid
 from urllib.parse import urlparse
 
 from .errors import PlaygroundError
+from .request_logging import note_upstream, register_secrets, set_stage
 
 WAA_URL = 'https://waa-pa.clients6.google.com/$rpc/google.internal.waa.v1.Waa/Create'
 WAA_KEY = 'lmnUSbltwc5ULv48iKLX'
@@ -51,9 +52,14 @@ async def load_interpreter(client, challenge, cached=None):
         url = urlparse(challenge['interpreter_url'])
         if url.scheme != 'https' or url.hostname not in ('www.google.com', 'www.gstatic.com') or url.username or url.port:
             raise PlaygroundError('Unexpected WAA interpreter origin', code='waa_protocol_error')
+        set_stage('waa_interpreter')
+        note_upstream('GET',url.geturl())
         resp = await client.get(url.geturl(), headers={'Referer': 'https://aistudio.google.com/'})
+        note_upstream('GET',url.geturl(),status=resp.status_code)
         if resp.status_code != 200:
-            raise PlaygroundError('WAA interpreter download failed', code='waa_unavailable')
+            error = PlaygroundError('WAA interpreter download failed', code='waa_unavailable')
+            error.diagnostic_status = resp.status_code
+            raise error
         source = resp.text
     if interpreter_hash(source) != challenge['interpreter_hash']:
         raise PlaygroundError('WAA interpreter SHA-256 mismatch', code='waa_protocol_error')
@@ -70,7 +76,9 @@ async def fetch_resource(client, resource):
         referer = resource.get('referrer','')
         ref = urlparse(referer)
         headers = {'Referer':referer} if ref.scheme=='https' and ref.hostname in allowed else {}
+        note_upstream('GET',target.geturl())
         async with client.stream('GET',target.geturl(),headers=headers) as response:
+            note_upstream('GET',target.geturl(),status=response.status_code)
             if response.status_code!=200:
                 return {'ok':False,'http_status':response.status_code}
             body = bytearray()
@@ -110,6 +118,7 @@ class AndroidWAA:
 
     async def call(self, op, **fields):
         from types import SimpleNamespace
+        set_stage('waa_execution')
         async with self.lock:
             try:
                 deadline = time.monotonic() + self.timeout
@@ -144,9 +153,14 @@ class AndroidWAA:
                                                           max(.001,deadline-time.monotonic()))
                     await write(dict(op='resource_result', resource_id=resource['id'], **response))
                 if 'error' in result:
-                    raise PlaygroundError('Local WAA program failed',503,'waa_execution_error')
+                    error = PlaygroundError('Local WAA program failed',503,'waa_execution_error')
+                    # Worker error strings pass through the same request-local
+                    # secret scrubber as HTTP failures; never persist IPC frames.
+                    error.diagnostic_raw = str(result['error'])[:4096]
+                    raise error
                 if result.get('id') != self.sequence or not isinstance(result.get('result'), dict):
                     raise ValueError()
+                register_secrets(result['result'].get('proof'))
                 return result['result']
             except asyncio.CancelledError:
                 await asyncio.shield(self._stop())
@@ -154,9 +168,11 @@ class AndroidWAA:
             except PlaygroundError:
                 await self._stop()
                 raise
-            except Exception:
+            except Exception as failure:
                 await self._stop()
-                raise PlaygroundError('Bundled WAA worker failed or timed out',503,'waa_unavailable') from None
+                error = PlaygroundError('Bundled WAA worker failed or timed out',503,'waa_unavailable')
+                error.diagnostic_raw, error.diagnostic_type = str(failure), type(failure).__name__
+                raise error from None
 
     async def close(self):
         async with self.lock:

@@ -358,8 +358,12 @@ class MainActivity : ComponentActivity() {
             lastModel = (it.opt("lastModel") as? String).orEmpty(), lastError = (it.opt("lastError") as? String).orEmpty(),
             modelCount = it.optInt("modelCount"), cooldownSeconds = it.optInt("cooldownSeconds"), active = it.optBoolean("active")) },
         pendingLogins = pendingLogins.mapNotNull { value -> value.optString("id").takeIf { it.isNotBlank() }?.let { PendingLoginUi(it, value.optString("label", "Google 凭证")) } },
-        logs = snapshot.optJSONArray("logs")?.let { list -> (0 until list.length()).mapNotNull { list.optJSONObject(it) }
-            .map { UiLogEvent(it.optDouble("at", 0.0), it.optString("event")) } } ?: emptyList(),
+        logs = snapshot.optJSONArray("logs")?.let { list -> (maxOf(0, list.length() - 100) until list.length()).mapNotNull { list.optJSONObject(it) }
+            .map { UiLogEvent(it.optDouble("at", 0.0), it.optString("event"),
+                id = it.optString("id"), level = it.optString("level"), title = it.optString("title"), summary = it.optString("summary"),
+                method = it.optString("method"), path = it.optString("path"), status = (it.opt("status") as? Number)?.toInt(),
+                durationMs = (it.opt("durationMs") as? Number)?.toDouble(), credentialIssue = it.optBoolean("credentialIssue"),
+                outcome = it.optString("outcome"), errorCode = it.optString("errorCode"), failureType = it.optString("failureType")) } } ?: emptyList(),
         addresses = if (snapshot.optBoolean("lan")) localAddresses() else emptyList(),
         busy = busy, notice = notice, noticeSequence = noticeSequence, themeMode = themeMode, version = BuildConfig.VERSION_NAME,
     )
@@ -381,6 +385,21 @@ class MainActivity : ComponentActivity() {
             .put("apiKey", config.apiKey).put("timeout", config.timeout).put("queueTimeout", config.queueTimeout)
             .put("keepAwake", config.keepAwake)) },
         onCopy = ::copy,
+        onLoadLogDetail = { id, callback ->
+            call("log_detail", JSONObject().put("id", id)) { response ->
+                val data = response.optJSONObject("result")
+                if (response.optBoolean("ok") && data != null) {
+                    val result = try { LogDetailResult(data = parseLogDetail(data)) }
+                    catch (_: Exception) { LogDetailResult(error = "日志详情暂时无法读取，请重新加载。") }
+                    callback(result)
+                } else {
+                    val expired = response.optJSONObject("error")?.optString("code") == "log_not_found"
+                    callback(LogDetailResult(error = if (expired)
+                        "这条日志已随旧记录清理或服务进程重启移除，请返回列表查看最近记录。"
+                        else "日志详情加载失败，请确认服务仍可连接后重试。"))
+                }
+            }
+        },
         onDiagnostics = { action("diagnostics") { result -> profileAction {
             val browser = ProfileStorageIo.run { GeckoProfiles.diagnostics(applicationContext) }
             detail = result.put("browser", browser).toString(2)

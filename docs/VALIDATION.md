@@ -1,5 +1,43 @@
 # 验证总览与复现
 
+## 0.4.0 · 2026-11-01 调用日志与刷新交互
+
+版本号更新为 **0.4.0**、版本码 **40**，同步 Android 应用、Python 后端、Gecko 桥接扩展和当前说明文档。调用日志开发包先由用户完成人工验收；本轮修复详情刷新挤动页面后，完成以下回归。下文开发包的安装记录与历史版本结果未计入本次通过数。
+
+| 检查 | 本次结果 |
+| --- | --- |
+| Python 全量回归 | **910 项通过**，其中新增 57 项日志用例 |
+| JVM 回归 | **16 项通过**：登录恢复 13 项、导航策略 3 项 |
+| Android 完整回归 | **72 项通过**，14 个测试类；最终日志为 `OK (72 tests)`，耗时 90.883 秒 |
+| 新增日志专项 | 包含在 72 项中：`LogDetailInstrumentedTest` 5 项，`RequestLogsInstrumentedTest` 2 项；其中一个方法执行 7 个打包 Python 故障场景，不另加为 7 项 Android 测试 |
+| 安装与版本 | 现有 `Pixel_10_API_37_Debug`，序列号 `emulator-5554`；Android 17 / API 37 / x86_64，覆盖安装本轮 0.4.0 / 40 Debug 主包与测试包 |
+
+Python 回归覆盖错误密钥、错误地址、网络连接与超时、凭证异常、流式中断及敏感信息脱敏。回归中修复了签名 Cookie 缺失与过期混淆、长提示词部分回显、脱敏预算耗尽后的原文保护，以及前一个凭证的 503 错误被误归到最终参数错误等问题。另补齐 ASGI 通用 `OSError` 断连分类；响应头尚未发出时保留空状态，不编造客户端已收到 HTTP 500。
+
+设备日志检查通过实际 APK 监听端口和私有 Binder 执行，覆盖错误密钥、错误地址、错误方法、参数拒绝、健康请求、详情不存在，以及日志详情不对 HTTP 开放。测试保留凭证与设置，并恢复原服务状态。7 个打包 Python 故障场景在应用自带运行时中执行；连接异常包含 Android 回环地址的真实连接拒绝，其余上游错误由受控响应构造，未访问 Google 生成接口。
+
+刷新交互检查比较刷新前后的摘要位置，确认正文没有被加载控件挤动；检查图标旋转中方向变化、结束后归位，再等待 500 毫秒确认静止。旋转角度按 360 度归一，避免反复刷新累积变换精度误差，并查看了刷新前、中、后的截图。初次整按钮逐像素比较受到按钮背景反馈影响，已改为验证上述实际交互行为；两个旧 UI 用例也因可点击卡片合并语义而调整了节点定位，随后重新执行完整 72 项，最终全部通过。
+
+本轮 x86_64 Debug APK SHA-256：`a7aa88d658f9d7305e2024ff357a68c0c64edd7db94ec422396de3b192bfa2cf`，与 `artifacts/pg-proxy-apks.json` 一致。构建、Python/JVM/Android 日志、清单与动画截图保存在被 Git 忽略的 `artifacts/release-0.4.0/`，不整体上传。
+
+ARM64 预构建已核对版本码 40、组件齐全、不可调试和正式签名；证书 SHA-256 为 `e7c43a66f990d01ed2bdb9d967db5b1df905e3527c31fcabac37f46f6017b39d`，沿用 0.2.0 起的正式签名。发布用 ARM64 包另从最终干净提交构建，最终源码提交、签名与附件哈希以本次 Release 的 `BUILD_INFO.json` 和 `SHA256SUMS.txt` 为准。
+
+**本轮未操作真机，未重新执行真实 Google 登录或模型生成，也未在 ARM64 设备安装运行正式附件。** 受控错误、模拟器回归与打包校验分别证明各自范围，不替代真实上游、物理局域网、厂商后台或长期运行验收。
+
+## 2026-11-01 调用日志开发包：人工验收前交付记录
+
+本轮增加公开 API 调用日志、脱敏详情、凭证异常和网络缓存提示。按用户安排，**只完成代码开发、构建与安装，未开展项目自测**。没有执行 API 请求、故障注入、单元测试、界面自动化或真实 Google 生成；以下历史通过结果不能作为这次变更的验证结论。
+
+- 测试包：`PG-Proxy-0.3.1-api-logging-test-x86_64.apk`，Debug 签名；暂沿用版本 `0.3.1` / 版本码 `31`，不属于原 0.3.1 Release 附件。
+- 构建：离线 `assembleX64Debug` 成功，只构建主应用，没有执行测试任务。
+- 部署：核实 `emulator-5554` 对应现有 `Pixel_10_API_37_Debug`，完成启动等待后安装，ADB 返回 `Success`；未操作真机，未清除应用或模拟器数据，未启动应用测试流程。
+- APK SHA-256：`40f0aee4efcafd39eb8d26b0976b6fe7667d63aae1b4b5b67b52343005751aa8`。
+- 本地构建清单、构建及安装日志保存在被 Git 忽略的 `artifacts/api-logging/`。人工验收项目见[调用日志说明](REQUEST_LOGGING.md)，后续测试需经用户通知后再开展。
+
+用户随后确认人工验收通过，并提出详情刷新时页面跳动的交互修正。后续回归与修正后的新包属于上节 0.4.0 阶段，未回写为本开发包已经执行过自动化测试。
+
+## 历史验证记录
+
 本页汇总 **PG Proxy 0.1.0 至 0.3.1** 在 **2026-10-29 至 2026-10-31** 的开发与验收记录。每项结果对应具体阶段、架构和安装包；正式 Release 的源码、签名与附件校验以其公开 `BUILD_INFO.json` 和发布说明为准。
 
 | 记录 | 环境与主要内容 | 详细报告 |
@@ -206,8 +244,8 @@ HTTP 测试通过 **ADB 端口转发**访问模拟器中 APK 的服务，没有�
 .venv\Scripts\python.exe tools\build_app.py --skip-native-build --tests --test-abi x86_64 --offline
 adb devices -l
 adb -s emulator-5554 shell getprop ro.boot.qemu.avd_name
-adb -s emulator-5554 install -r artifacts\PG-Proxy-0.3.1-x86_64.apk
-adb -s emulator-5554 install -r artifacts\PG-Proxy-0.3.1-x86_64-androidTest.apk
+adb -s emulator-5554 install -r artifacts\PG-Proxy-0.4.0-x86_64.apk
+adb -s emulator-5554 install -r artifacts\PG-Proxy-0.4.0-x86_64-androidTest.apk
 adb -s emulator-5554 shell am instrument -w -e class 'dev.pgproxy.app.UIInstrumentedTest,dev.pgproxy.app.ProfileStorageIoInstrumentedTest,dev.pgproxy.app.ReviewRegressionInstrumentedTest' dev.pgproxy.app.test/androidx.test.runner.AndroidJUnitRunner
 ```
 

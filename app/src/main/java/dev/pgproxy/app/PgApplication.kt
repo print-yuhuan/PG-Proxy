@@ -51,7 +51,7 @@ class ProxyConnector(private val context: Context, private val timeoutMillis: Lo
         requests[id] = pending
         main.post {
             if (requests[id] !== pending) return@post
-            val actionLimit = if (action in setOf("snapshot", "network_info", "diagnostics")) 30_000L else 300_000L
+            val actionLimit = if (action in setOf("snapshot", "log_detail", "network_info", "diagnostics")) 30_000L else 300_000L
             main.postDelayed(timeout, minOf(timeoutMillis, actionLimit).coerceAtLeast(1))
             if (requests[id] !== pending) { main.removeCallbacks(timeout); return@post }
             val message = Message.obtain(null, 100, id, 0).apply {

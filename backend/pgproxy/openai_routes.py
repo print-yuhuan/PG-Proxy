@@ -4,24 +4,31 @@ from .openai_transformers import openai_request_to_gemini
 from .responses import generation_response
 from .model_catalog import find_model, openai_model
 from .openai_compat import normalize_openai_request, select_default_model
+from .request_logging import record_parameters, set_stage
 
 router = APIRouter(dependencies=[Depends(authenticate_user)])
 
 
 @router.get('/v1/models')
 async def list_models(request: Request):
+    set_stage('model_catalog')
     models = await request.app.state.playground.models()
     return {'object':'list','data':[openai_model(model) for model in models.values()]}
 
 
 @router.get('/v1/models/{model}')
 async def model_detail(request: Request, model: str):
+    record_parameters({'model': model})
+    set_stage('model_catalog')
     return openai_model(find_model(await request.app.state.playground.models(),model))
 
 
 @router.post('/v1/chat/completions')
 async def completions(request: Request, body: dict = Body(...)):
+    set_stage('parameters')
+    record_parameters(body)
     body = normalize_openai_request(body)
+    record_parameters(body)
     if 'model' not in body:
         # Fail malformed conversational data before making a catalog request.
         openai_request_to_gemini({**body, 'model': 'validation-only'})

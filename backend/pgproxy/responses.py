@@ -7,6 +7,7 @@ from fastapi.responses import StreamingResponse
 from .errors import PlaygroundError
 from .openai_transformers import OpenAIProjector, finish_reason, usage_metadata, gemini_response_to_openai
 from .request_statistics import mark_request_failed
+from .request_logging import record_error, record_parameters
 
 
 class OwnedStreamResponse(StreamingResponse):
@@ -54,6 +55,7 @@ async def collect(stream):
 
 
 async def generation_response(client,model,payload,streaming=False,openai=False,sse=True,include_usage=False,request=None):
+    record_parameters({'model': model, 'stream': streaming})
     source = client.generate(model,payload)
     if not streaming:
         result = await collect(source)
@@ -108,6 +110,10 @@ async def generation_response(client,model,payload,streaming=False,openai=False,
                 yield ']'
         except Exception as failure:
             error = failure if isinstance(failure,PlaygroundError) else PlaygroundError('Stream processing failed',code='protocol_error')
+            if error is not failure:
+                error.diagnostic_raw = str(failure)
+                error.diagnostic_type = type(failure).__name__
+            record_error(error)
             mark_request_failed(request)
             if openai or sse:
                 yield 'data: '+dumps(error.body())+'\n\n'

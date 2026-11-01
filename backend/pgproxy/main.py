@@ -11,9 +11,10 @@ from .openai_routes import router as openai_router
 from .gemini_routes import router as gemini_router
 from .request_statistics import RequestStatistics, RequestStatisticsMiddleware
 from .request_guard import RequestGuardMiddleware
+from .request_logging import LogStore, RequestLoggingMiddleware, record_error
 
 
-def create_app(client, close_on_shutdown=True, request_statistics=None):
+def create_app(client, close_on_shutdown=True, request_statistics=None, request_logs=None):
     @asynccontextmanager
     async def lifespan(app):
         app.state.playground = client
@@ -30,22 +31,31 @@ def create_app(client, close_on_shutdown=True, request_statistics=None):
     statistics = request_statistics if request_statistics is not None else RequestStatistics()
     app.state.request_statistics = statistics
     app.add_middleware(RequestStatisticsMiddleware,statistics=statistics)
+    logs = request_logs if request_logs is not None else LogStore()
+    app.state.request_logs = logs
+    # Outside guard, routing and CORS: rejected keys, bad addresses, OPTIONS and
+    # stream failures share the same request lifecycle record.
+    app.add_middleware(RequestLoggingMiddleware,logs=logs)
 
     @app.exception_handler(PlaygroundError)
     async def upstream_error(request: Request,exc: PlaygroundError):
+        record_error(exc)
         return JSONResponse(exc.body(),status_code=exc.status,headers={'Retry-After':exc.retry_after} if exc.retry_after else None)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request,exc: RequestValidationError):
+        record_error(exc)
         return JSONResponse({'error':{'message':'请求体须为有效 JSON 对象，请检查字段类型。','type':'invalid_request_error','code':400}},status_code=400)
 
     @app.exception_handler(HTTPException)
     async def http_error(request: Request,exc: HTTPException):
+        record_error(exc)
         message = {401:'接口密钥不正确，请检查客户端认证设置。',404:'接口路径不存在。',405:'此接口不支持该请求方法。'}.get(exc.status_code,'请求未能完成，请检查参数。')
         return JSONResponse({'error':{'message':message,'type':'authentication_error' if exc.status_code==401 else 'invalid_request_error','code':exc.status_code}},status_code=exc.status_code,headers=exc.headers)
 
     @app.exception_handler(Exception)
     async def internal_error(request: Request,exc: Exception):
+        record_error(exc)
         return JSONResponse({'error':{'message':'服务处理请求时发生异常，请稍后重试。','type':'service_error','code':500}},status_code=500)
 
     @app.get('/')
