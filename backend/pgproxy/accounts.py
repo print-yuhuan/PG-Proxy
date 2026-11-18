@@ -6,6 +6,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 from .config import Settings
+from .cooldown import CooldownError, retry_after_header, retry_deadline
 from .errors import PlaygroundError
 from .playground_client import PlaygroundClient
 from .session import BridgeSession, GoogleSession
@@ -23,6 +24,7 @@ class AccountPool:
         self.client_factory = client_factory
         self.clients = {}
         self.gate = asyncio.Lock()
+        self.availability_changed = asyncio.Event()
         self.cursor = 0
         self.active = None
         self.settings = self._settings()
@@ -74,28 +76,73 @@ class AccountPool:
         return self.clients[account_id]
 
     @asynccontextmanager
-    async def queued(self):
+    async def queued(self, require_available=False, model=None):
         set_stage('queue')
-        try:
-            await asyncio.wait_for(self.gate.acquire(),self.settings.queue_timeout)
-        except asyncio.TimeoutError:
-            raise PlaygroundError('Service request queue is busy',429,'account_busy','5') from None
-        try:
-            yield
-        finally:
-            self.gate.release()
+        clock = asyncio.get_running_loop().time
+        deadline = clock() + self.settings.queue_timeout
+        while True:
+            if require_available and (cooldown := self._pool_cooldown(model)) is not None:
+                recovery_delay = cooldown.cooldown_deadline - time.time()
+                if recovery_delay >= deadline - clock():
+                    raise cooldown
+                # Keep the serial gate available for other requests and account changes.
+                self.availability_changed.clear()
+                try:
+                    async with asyncio.timeout(recovery_delay):
+                        await self.availability_changed.wait()
+                except TimeoutError:
+                    pass
+                continue
+            try:
+                if clock() >= deadline:
+                    raise TimeoutError()
+                async with asyncio.timeout_at(deadline):
+                    await self.gate.acquire()
+            except TimeoutError:
+                raise PlaygroundError('Service request queue is busy',429,'account_busy','5') from None
+            try:
+                # The previous gate holder may have cooled the last ready account.
+                if require_available and self._pool_cooldown(model) is not None:
+                    continue
+                yield
+                return
+            finally:
+                self.gate.release()
+
+    def _routable_accounts(self):
+        return [record for record in self.state['accounts']
+                if record['enabled'] and record['id'] not in self.state['deletedAccountIds']
+                and record.get('status') not in ('needs_login','validation_error','deleting')]
 
     def eligible(self):
         now = time.time()
-        return [r for r in self.state['accounts'] if r['enabled'] and r['id'] not in self.state['deletedAccountIds']
-                and r.get('status') not in ('needs_login','validation_error','deleting')
-                and r.get('cooldownUntil',0) <= now]
+        return [record for record in self._routable_accounts() if record.get('cooldownUntil',0) <= now]
+
+    def _pool_cooldown(self, model=None):
+        now = time.time()
+        records = self._routable_accounts()
+        if model is not None:
+            known_support = False
+            possible = []
+            for record in records:
+                client = self.clients.get(record['id'])
+                supports_model = client.cached_model_support(model) if client else None
+                known_support |= supports_model is True
+                if supports_model is not False:
+                    possible.append(record)
+            # Unknown/expired catalogs can still contain the model. Only narrow
+            # the recovery time when a fresh catalog actually offers it.
+            if known_support:
+                records = possible
+        earliest = min((record.get('cooldownUntil',0) for record in records), default=0)
+        if earliest > now:
+            return CooldownError(earliest, earliest - now)
 
     def failed(self, record, error):
         # Directory aggregation can continue with a different credential. Keep
         # this attempt visible without marking a later successful call failed.
         record_credential_issue(error,record['id'])
-        if record['id'] in self.state['deletedAccountIds']:
+        if record['id'] in self.state['deletedAccountIds'] or error.code == 'account_busy':
             return
         record['lastError'] = error.code
         if error.code in ('session_required','session_invalid','upstream_authentication_error'):
@@ -104,14 +151,16 @@ class AccountPool:
             record['status'] = 'validation_error'
         elif error.status == 429:
             record['status'] = 'cooldown'
-            try:
-                seconds = max(1,int(error.retry_after or 60))
-            except (ValueError,TypeError):
-                seconds = 60
-            record['cooldownUntil'] = time.time()+seconds
+            deadline = getattr(error, 'cooldown_deadline', None)
+            if deadline is None:
+                now = time.time()
+                deadline = retry_deadline(error.retry_after, now)
+                error.retry_after = retry_after_header(deadline - now)
+            record['cooldownUntil'] = max(record.get('cooldownUntil',0), deadline)
         else:
             record['status'] = 'error'
         self.persist()
+        self.availability_changed.set()
 
     async def _catalog(self, record):
         set_stage('model_catalog')
@@ -120,12 +169,14 @@ class AccountPool:
         return catalog
 
     async def models(self):
-        async with self.queued():
+        async with self.queued(require_available=True):
             set_stage('credential')
             result = {}
             candidates = self.eligible()
             last = None
             for record in candidates:
+                if not record['enabled']:
+                    continue
                 try:
                     catalog = await self._catalog(record)
                     if record['enabled']:
@@ -136,7 +187,7 @@ class AccountPool:
                     self.failed(record,error)
                     last = error
             if not result:
-                raise last or PlaygroundError('No enabled account is available; add or check an account',503,'no_available_account')
+                raise self._pool_cooldown() or last or PlaygroundError('No enabled account is available; add or check an account',503,'no_available_account')
             self.persist()
             return result
 
@@ -151,6 +202,8 @@ class AccountPool:
         for offset in range(len(candidates)):
             index = (start+offset) % len(candidates)
             record = candidates[index]
+            if not record['enabled']:
+                continue
             try:
                 catalog = await self._catalog(record)
                 valid_catalog = True
@@ -163,8 +216,8 @@ class AccountPool:
                     self.cursor = index+1
                 return record
         if valid_catalog:
-            raise PlaygroundError('Model is not in the available Playground catalogs',404,'model_not_found')
-        raise last or PlaygroundError('No enabled account is available',503,'no_available_account')
+            raise self._pool_cooldown(model) or PlaygroundError('Model is not in the available Playground catalogs',404,'model_not_found')
+        raise self._pool_cooldown(model) or last or PlaygroundError('No enabled account is available',503,'no_available_account')
 
     async def _release_other_workers(self, account_id):
         # Retain each account's HTTP/cookie state, with at most one resident VM.
@@ -175,7 +228,7 @@ class AccountPool:
 
     async def count_tokens(self, model, request):
         model = model.removeprefix('models/')
-        async with self.queued():
+        async with self.queued(require_available=True, model=model):
             record = await self._select(model, advance=False)
             try:
                 return await self.client(record).count_tokens(model, request)
@@ -185,7 +238,7 @@ class AccountPool:
 
     async def generate(self, model, request):
         model = model.removeprefix('models/')
-        async with self.queued():
+        async with self.queued(require_available=True, model=model):
             record = await self._select(model)
             client = self.client(record)
             await self._release_other_workers(record['id'])
@@ -214,6 +267,10 @@ class AccountPool:
         record = self.record(account_id)
         async with self.queued():
             self.require_live_id(account_id)
+            now = time.time()
+            deadline = record.get('cooldownUntil', 0)
+            if deadline > now:
+                raise CooldownError(deadline, deadline - now)
             client = self.client(record)
             try:
                 catalog = await self._catalog(record)
@@ -297,6 +354,7 @@ class AccountPool:
             else:
                 self.state['accounts'].append(record)
             self.persist()
+            self.availability_changed.set()
         return account_id
 
     async def set_enabled(self, account_id, enabled):
@@ -306,6 +364,7 @@ class AccountPool:
         record = self.record(account_id)
         record['enabled'] = enabled
         self.persist()
+        self.availability_changed.set()
         if not enabled and self.active != account_id:
             client = self.clients.get(account_id)
             if client:
@@ -322,6 +381,7 @@ class AccountPool:
         if account_id not in self.state['deletedAccountIds']:
             self.state['deletedAccountIds'].append(account_id)
         self.persist()
+        self.availability_changed.set()
         task = self.deletions.get(account_id)
         if task is None or task.done():
             task = asyncio.create_task(self._finish_delete(account_id))

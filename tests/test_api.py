@@ -7,6 +7,7 @@ import httpx
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 from pgproxy.main import create_app
+from pgproxy.cooldown import MAX_RETRY_SECONDS, retry_deadline
 from pgproxy.errors import PlaygroundError
 from pgproxy.responses import generation_response
 from conftest import frame
@@ -98,6 +99,34 @@ def test_initial_upstream_errors_keep_http_status(client_factory,status):
         if status==429:
             assert r.headers['retry-after']=='25'
             assert c.cooldown_until>0
+
+
+@pytest.mark.parametrize(('value', 'delay'), [
+    (None, 60), ('invalid', 60), ('0', 1), ('0015', 15), ('8'*6000, MAX_RETRY_SECONDS),
+    ('Thu, 01 Jan 1970 00:17:05 GMT', 25), ('Thu, 01 Jan 1970 00:00:00 GMT', 1),
+    ('Thu Jan  1 00:17:05 1970', 25), ('Fri, 02 Jan 1970 12:00:00 GMT', MAX_RETRY_SECONDS),
+])
+def test_retry_after_accepts_seconds_and_http_dates_with_finite_bounds(value, delay):
+    assert retry_deadline(value, now=1000) == 1000 + delay
+
+
+def test_rate_limited_page_keeps_a_stable_deadline_and_does_not_repeat_request(client_factory):
+    def reply(request):
+        if request.method == 'GET':
+            return httpx.Response(429, json={'error':{'status':'RESOURCE_EXHAUSTED'}},
+                                  headers={'Retry-After':'8'*60})
+
+    client, requests = client_factory(extra_handler=reply)
+    with TestClient(create_app(client)) as api:
+        initial = api.get('/v1/models', headers=auth(client))
+        deadline = client.cooldown_deadline
+        repeated = api.get('/v1/models', headers=auth(client))
+        assert initial.status_code == repeated.status_code == 429
+        assert initial.headers['retry-after'] == str(MAX_RETRY_SECONDS)
+        assert 1 <= int(repeated.headers['retry-after']) <= MAX_RETRY_SECONDS
+        assert repeated.json()['error']['type'] == 'rate_limit'
+        assert client.cooldown_deadline == deadline
+        assert len(requests) == 1
 
 
 def test_midstream_truncation_error_without_success_done(client_factory):

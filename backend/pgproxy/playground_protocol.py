@@ -1,14 +1,24 @@
 """Playground JSON+protobuf arrays (ported from AIStudio2API, see NOTICE)."""
 import base64
+import hashlib
 import json
 import math
 import re
 from datetime import datetime
 from urllib.parse import urlsplit
 from .errors import PlaygroundError
+from .model_catalog import THINKING_LEVEL_IDS
 
 
 CONTINUATION_ROUND_TOKENS = 32768
+MAX_WIRE_FUNCTION_NAME_BYTES = 63
+_IDENTIFIER = re.compile(r'[A-Za-z_][A-Za-z0-9_.:-]*')
+_JS_INDEX_KEY = re.compile(r'0|[1-9][0-9]{0,9}')
+_JS_NON_INDEX = 2**32 - 1
+
+
+def valid_identifier(name):
+    return isinstance(name, str) and _IDENTIFIER.fullmatch(name) is not None
 
 
 def invalid(message):
@@ -111,13 +121,21 @@ def string_list(value, name, *, nonempty=False):
     return value
 
 
-def encode_struct(value, depth=0):
+def _javascript_property_index(key):
+    # Stable sorting preserves insertion order outside the JavaScript index range.
+    if _JS_INDEX_KEY.fullmatch(key):
+        return min(int(key), _JS_NON_INDEX)
+    return _JS_NON_INDEX
+
+
+def encode_struct(value, depth=0, *, javascript_order=False):
     if depth > 64 or not isinstance(value,dict) or any(not isinstance(k,str) for k in value):
         raise invalid('函数参数和返回值必须为深度不超过 64 的 JSON 对象')
-    return [[[key,encode_value(value[key],depth+1)] for key in sorted(value)]] if value else []
+    keys = sorted(value, key=_javascript_property_index if javascript_order else None)
+    return [[[key,encode_value(value[key],depth+1,javascript_order=javascript_order)] for key in keys]] if value else []
 
 
-def encode_value(value, depth=0):
+def encode_value(value, depth=0, *, javascript_order=False):
     if depth > 64:
         raise invalid('JSON 嵌套层级过深')
     if value is None:
@@ -130,9 +148,9 @@ def encode_value(value, depth=0):
     if isinstance(value,str):
         return [None,None,value]
     if isinstance(value,dict):
-        return [None,None,None,None,encode_struct(value,depth+1)]
+        return [None,None,None,None,encode_struct(value,depth+1,javascript_order=javascript_order)]
     if isinstance(value,list):
-        return [None,None,None,None,None,[[encode_value(v,depth+1) for v in value]]]
+        return [None,None,None,None,None,[[encode_value(v,depth+1,javascript_order=javascript_order) for v in value]]]
     raise invalid('函数参数包含不支持的 JSON 值')
 
 
@@ -209,7 +227,9 @@ def encode_part(part):
             raise invalid('Invalid inlineData base64') from None
         if not binary:
             raise invalid('inlineData must not be empty')
-        binding = base64.b64encode(binary).decode()
+        canonical = base64.b64encode(binary)
+        del binary
+        binding = canonical.decode('ascii')
         wire = [None,None,[blob['mimeType'],binding]]
     elif 'fileData' in part:
         media = object_fields(part['fileData'],{'mimeType','fileUri'},'fileData')
@@ -227,7 +247,7 @@ def encode_part(part):
         value = object_fields(part[key],{'name',data_key,'id'},key)
         if not isinstance(value.get('name'),str) or not value['name']:
             raise invalid(f'{key}.name 必须为非空字符串')
-        encoded = [value['name'],encode_struct(value.get(data_key,{}))]
+        encoded = [value['name'],encode_struct(value.get(data_key,{}),javascript_order=not call)]
         if 'id' in value:
             if not isinstance(value['id'],str) or not value['id']:
                 raise invalid(f'{key}.id 必须为非空字符串')
@@ -575,7 +595,54 @@ def encode_tools(request, model):
     return ([[None,declarations]] if declarations else []) + builtins,bool(declarations and builtins)
 
 
-def encode_generate(model_id, request, model, timezone='', *, continuation_round=0, continuation_token=None):
+def _encode_function_names(wire):
+    """Alias only the Playground name slots, preserving the caller's request."""
+    fields = [
+        function for parts, _ in wire[1] for part in parts for index in (10, 11)
+        if (function := at(part, index)) is not None
+    ]
+    for tool in at(wire, 6, []):
+        fields.extend(at(tool, 1, []))
+    occupied = {field[0] for field in fields}
+    aliases = {}
+    originals = {}
+    digest_bytes = 15
+    prefix_bytes = MAX_WIRE_FUNCTION_NAME_BYTES - 2 - 2 * digest_bytes
+    for name in sorted(occupied):
+        try:
+            encoded = name.encode('utf-8')
+        except UnicodeEncodeError:
+            raise invalid('Function name contains invalid Unicode') from None
+        if len(encoded) <= MAX_WIRE_FUNCTION_NAME_BYTES:
+            continue
+        prefix = encoded[:prefix_bytes].decode('utf-8', errors='ignore')
+        digest = hashlib.sha256(encoded).digest()
+        while True:
+            alias = prefix + '__' + digest[:digest_bytes].hex()
+            if alias not in occupied and alias not in originals:
+                break
+            # Reserve actual short names and disambiguate long names in a stable order.
+            digest = hashlib.sha256(digest).digest()
+        aliases[name] = alias
+        originals[alias] = name
+    if aliases:
+        for field in fields:
+            field[0] = aliases.get(field[0], field[0])
+    return originals
+
+
+def restore_function_names(frame, aliases):
+    if not aliases:
+        return
+    for candidate in frame.get('candidates', []):
+        for part in candidate.get('content', {}).get('parts', []):
+            for key in ('functionCall', 'functionResponse'):
+                if key in part and part[key]['name'] in aliases:
+                    part[key]['name'] = aliases[part[key]['name']]
+
+
+def encode_generate(model_id, request, model, timezone='', *, continuation_round=0, continuation_token=None,
+                    function_aliases=None):
     if not isinstance(request,dict) or set(request)-{'contents','systemInstruction','generationConfig','safetySettings','tools','toolConfig'}:
         raise invalid('Unsupported Gemini request field')
     codes = model.get('_codes',[])
@@ -749,12 +816,14 @@ def encode_generate(model_id, request, model, timezone='', *, continuation_round
                 raise invalid('thinkingBudget below model minimum')
             t += [budget]
         if 'thinkingLevel' in thinking:
-            levels = {'LOW':1,'MEDIUM':2,'HIGH':3,'MINIMAL':4}
-            level = levels.get(str(thinking['thinkingLevel']).upper())
+            name = str(thinking['thinkingLevel']).upper()
+            level = THINKING_LEVEL_IDS.get(name)
             supported_levels = at(model.get('_thinking',[]),6,[])
-            if 52 not in codes or level is None or level not in supported_levels:
+            if 52 not in codes or level is None or not isinstance(supported_levels,list) or level not in supported_levels:
                 raise invalid('Unsupported thinkingLevel for this model')
-            t += [None]*(4-len(t)); t[3] = level
+            t += [None]*(4-len(t))
+            # ListModels advertises Extra High as 5. GenerateContent expects 6.
+            t[3] = 6 if name == 'EXTRA_HIGH' else level
         if len(g)<17:
             g += [None]*(17-len(g))
         g[16] = t
@@ -796,6 +865,10 @@ def encode_generate(model_id, request, model, timezone='', *, continuation_round
     elif 49 in codes and 21 in codes:
         # The website sends the empty search extension for resolution-capable images.
         wire[6] = [[None,None,None,[None,[]]]]
+    aliases = _encode_function_names(wire) if 10 in codes else {}
+    if function_aliases is not None:
+        function_aliases.clear()
+        function_aliases.update(aliases)
     return wire, ' '.join(bindings), ' '.join(last_text)
 
 
@@ -842,9 +915,30 @@ async def iter_frames(chunks, max_buffer=16*1024*1024):
             raise ValueError()
     except ValueError:
         raise PlaygroundError('Truncated or malformed Playground response',code='stream_interrupted') from None
+    # A streaming RPC can carry a terminal google.rpc.Status after its frame list.
+    status = at(tail, 1)
+    if status is None:
+        return
+    code = at(status, 0)
+    if type(code) is not int:
+        raise PlaygroundError('Invalid Playground trailer status', code='protocol_error')
+    if code:
+        http_status, error_code = {
+            3: (400, 'upstream_error'),
+            4: (504, 'upstream_timeout'),
+            5: (404, 'upstream_error'),
+            7: (403, 'upstream_error'),
+            8: (429, 'rate_limit'),
+            9: (400, 'upstream_error'),
+            14: (503, 'upstream_error'),
+            16: (401, 'upstream_authentication_error'),
+        }.get(code, (502, 'upstream_error'))
+        error = PlaygroundError('Playground generation failed in the stream trailer', http_status, error_code)
+        error.diagnostic_upstream_code = f'google.rpc.Status {code}'
+        raise error
 
 
-FINISH = {0:'FINISH_REASON_UNSPECIFIED',1:'STOP',2:'MAX_TOKENS',3:'SAFETY',4:'RECITATION',5:'OTHER',6:'LANGUAGE',7:'BLOCKLIST',8:'PROHIBITED_CONTENT',9:'SPII',10:'MALFORMED_FUNCTION_CALL',11:'IMAGE_SAFETY',12:'UNEXPECTED_TOOL_CALL',13:'TOO_MANY_TOOL_CALLS',14:'IMAGE_PROHIBITED_CONTENT',15:'IMAGE_OTHER',16:'NO_IMAGE',17:'IMAGE_RECITATION',18:'MISSING_THOUGHT_SIGNATURE'}
+FINISH = {0:'FINISH_REASON_UNSPECIFIED',1:'STOP',2:'MAX_TOKENS',3:'SAFETY',4:'RECITATION',5:'OTHER',6:'LANGUAGE',7:'BLOCKLIST',8:'PROHIBITED_CONTENT',9:'SPII',10:'MALFORMED_FUNCTION_CALL',11:'IMAGE_SAFETY',12:'UNEXPECTED_TOOL_CALL',13:'TOO_MANY_TOOL_CALLS',14:'IMAGE_PROHIBITED_CONTENT',15:'IMAGE_OTHER',16:'NO_IMAGE',17:'IMAGE_RECITATION',18:'MISSING_THOUGHT_SIGNATURE',19:'MALFORMED_RESPONSE'}
 
 
 def response_fields(raw, fields):
@@ -939,13 +1033,31 @@ def decode_transcript(raw):
     return result
 
 
+def _decode_usage(usage):
+    metadata = {key:at(usage,idx,0) for idx,key in ((0,'promptTokenCount'),(1,'candidatesTokenCount'),(2,'totalTokenCount'),(3,'cachedContentTokenCount'),(9,'thoughtsTokenCount'))}
+    if at(usage,7) is not None:
+        metadata['toolUsePromptTokenCount'] = usage[7]
+    if any(type(v) is not int or v<0 for v in metadata.values()):
+        raise PlaygroundError('Unexpected Playground token usage type',code='protocol_error')
+    # Preserve explicit counts including zero. Only derive an omitted output count.
+    if at(usage,1) is None:
+        metadata['candidatesTokenCount'] = max(0,metadata['totalTokenCount']-
+            metadata['promptTokenCount']-metadata['thoughtsTokenCount']-
+            metadata.get('toolUsePromptTokenCount',0))
+    return metadata
+
+
 def decode_frame(frame, *, continuable=False):
     candidates = at(frame,0)
+    usage = at(frame,2)
     if candidates is None:
+        result = {}
         feedback = at(frame,1)
         if feedback is not None:
-            return {'promptFeedback':{'blockReason':{1:'SAFETY',2:'OTHER',3:'BLOCKLIST',4:'PROHIBITED_CONTENT',5:'IMAGE_SAFETY'}.get(at(feedback,0),'BLOCK_REASON_UNSPECIFIED')}}
-        return None
+            result['promptFeedback'] = {'blockReason':{1:'SAFETY',2:'OTHER',3:'BLOCKLIST',4:'PROHIBITED_CONTENT',5:'IMAGE_SAFETY'}.get(at(feedback,0),'BLOCK_REASON_UNSPECIFIED')}
+        if usage is not None:
+            result['usageMetadata'] = _decode_usage(usage)
+        return result or None
     if not isinstance(candidates,list) or len(candidates)!=1:
         raise PlaygroundError('Unexpected Playground candidate count',code='protocol_error')
     source = candidates[0]
@@ -1027,8 +1139,9 @@ def decode_frame(frame, *, continuable=False):
             raise PlaygroundError('Upstream requested unsupported continuation',code='protocol_error')
         candidate['finishReason'] = 'MAX_TOKENS' if code == 22 else FINISH.get(code,f'PROVIDER_{code}')
     result = {'candidates':[candidate]}
-    if at(source,3) is not None:
-        candidate.update(response_fields(source,((3,'finishMessage',str),)))
+    # Validate but do not expose raw finish descriptions, which can echo request text.
+    if at(source,3) is not None and not isinstance(source[3],str):
+        raise PlaygroundError('Unexpected Playground finish description type',code='protocol_error')
     if at(source,6) is not None:
         entries = at(source[6],0,[])
         if not isinstance(entries,list):
@@ -1044,19 +1157,8 @@ def decode_frame(frame, *, continuable=False):
             result['_continuationToken'] = token
         if code is not None:
             result['_finishCode'] = code
-    usage = at(frame,2)
     if usage is not None:
-        metadata = {key:at(usage,idx,0) for idx,key in ((0,'promptTokenCount'),(1,'candidatesTokenCount'),(2,'totalTokenCount'),(3,'cachedContentTokenCount'),(9,'thoughtsTokenCount'))}
-        if at(usage,7) is not None:
-            metadata['toolUsePromptTokenCount'] = usage[7]
-        if any(type(v) is not int or v<0 for v in metadata.values()):
-            raise PlaygroundError('Unexpected Playground token usage type',code='protocol_error')
-        # Some frames omit output usage. Preserve explicit values (including zero).
-        if at(usage,1) is None:
-            metadata['candidatesTokenCount'] = max(0,metadata['totalTokenCount']-
-                metadata['promptTokenCount']-metadata['thoughtsTokenCount']-
-                metadata.get('toolUsePromptTokenCount',0))
-        result['usageMetadata'] = metadata
+        result['usageMetadata'] = _decode_usage(usage)
     return result
 
 

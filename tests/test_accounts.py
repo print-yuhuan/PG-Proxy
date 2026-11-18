@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from pgproxy.accounts import AccountPool
+from pgproxy.cooldown import CooldownError
 from pgproxy.errors import PlaygroundError
 
 
@@ -39,11 +40,16 @@ class FakeClient:
         self.waa_at = 0
         self.waa = SimpleNamespace(process=None,close=self.close_worker)
         self.catalog = {'test-chat':{'name':'test-chat'}}
+        self.catalog_read = False
         self.failure = None
         self.calls = []
         self.active = False
     async def close_worker(self): self.waa.process = None
-    async def models(self): return self.catalog
+    async def models(self):
+        self.catalog_read = True
+        return self.catalog
+    def cached_model_support(self, model):
+        return (model in self.catalog) if self.catalog_read else None
     async def generate(self,model,request):
         self.calls.append(model)
         self.active = True
@@ -188,6 +194,109 @@ async def test_submitted_generation_is_not_retried_on_another_account():
     assert pool.record(a)['cooldownUntil'] > time.time()+10
     await consume(pool)
     assert second.calls == ['test-chat']
+    await pool.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('operation', ['models', 'count', 'generate'])
+async def test_all_usable_accounts_cooling_return_the_earliest_retry_without_waiting(operation):
+    pool,_ = pool_fixture()
+    a,b,disabled = await add(pool,'A'),await add(pool,'B'),await add(pool,'disabled')
+    now = time.time()
+    pool.record(a)['cooldownUntil'] = now + 120
+    pool.record(b)['cooldownUntil'] = now + 90
+    pool.record(disabled).update(enabled=False, cooldownUntil=now + 2)
+
+    operations = {'models': pool.models, 'count': lambda: pool.count_tokens('test-chat',{}),
+                  'generate': lambda: consume(pool)}
+    with pytest.raises(PlaygroundError) as captured:
+        await asyncio.wait_for(operations[operation](), .4)
+    error = captured.value
+    assert (error.status,error.code,error.retry_after,error.cooldown_deadline) == (429,'rate_limit','90',now+90)
+    assert not pool.clients and not pool.cursor and not pool.gate.locked()
+    await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_request_can_wait_for_cooldown_within_the_existing_admission_budget():
+    pool,_ = pool_fixture()
+    a = await add(pool)
+    deadline = time.time() + .05
+    pool.record(a)['cooldownUntil'] = deadline
+    frames = await consume(pool)
+    assert time.time() >= deadline
+    assert frames[0]['candidates'][0]['content']['parts'][0]['text'] == a
+    assert pool.client(pool.record(a)).calls == ['test-chat']
+    await pool.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('interrupt', ['cancel', 'delete'])
+async def test_cooldown_wait_does_not_hold_the_gate_or_resurrect_a_deleted_account(interrupt):
+    pool,bridge = pool_fixture()
+    a = await add(pool)
+    pool.settings.queue_timeout = 10
+    pool.record(a)['cooldownUntil'] = time.time() + 8
+    waiting = asyncio.Event()
+
+    class ObservedEvent(asyncio.Event):
+        async def wait(self):
+            waiting.set()
+            return await super().wait()
+
+    pool.availability_changed = ObservedEvent()
+    task = asyncio.create_task(consume(pool))
+    try:
+        await asyncio.wait_for(waiting.wait(), 1)
+        assert not pool.gate.locked()
+        if interrupt == 'cancel':
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        else:
+            await asyncio.wait_for(pool.delete(a), 1)
+            with pytest.raises(PlaygroundError) as captured:
+                await asyncio.wait_for(task,1)
+            assert captured.value.code == 'no_available_account' and a in bridge.deleted
+        assert not pool.clients and not pool.cursor and not pool.gate.locked()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_repeated_cooldown_feedback_keeps_the_original_deadline():
+    pool,_ = pool_fixture()
+    record = pool.record(await add(pool))
+    deadline = time.time() + 20
+    pool.failed(record, CooldownError(deadline, 20))
+    pool.failed(record, CooldownError(deadline, 19))
+    assert record['cooldownUntil'] == deadline
+    await pool.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('cached', 'expected'), [(True, 'rate_limit'), (False, 'model_not_found')])
+async def test_model_only_on_cooling_account_is_distinguished_from_unknown_support(cached, expected):
+    pool,_ = pool_fixture()
+    ready,limited = await add(pool, 'ready'),await add(pool, 'limited')
+    pool.client(pool.record(ready)).catalog = {'other': {'name':'other'}}
+    if cached:
+        await pool.models()
+        pool.client(pool.record(ready)).catalog_read = False  # Recheck the ready account's catalog.
+    pool.record(limited)['cooldownUntil'] = time.time() + 75
+
+    with pytest.raises(PlaygroundError) as captured:
+        await consume(pool)
+    assert captured.value.code == expected
+    if cached:
+        assert captured.value.retry_after == '75'
+    assert not pool.client(pool.record(ready)).calls and not pool.cursor
+    if cached:
+        assert not pool.client(pool.record(limited)).calls
+    else:
+        assert limited not in pool.clients
     await pool.close()
 
 

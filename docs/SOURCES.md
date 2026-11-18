@@ -1,6 +1,6 @@
 # 来源、版权与许可
 
-本页记录 PG Proxy **0.4.0** 的代码来源、运行依赖、设计参考和许可边界。项目版本与依赖版本分别维护；完整声明随源码和安装包保留。
+本页记录 PG Proxy **0.5.0** 的代码来源、运行依赖、设计参考和许可边界。项目版本与依赖版本分别维护，完整声明随源码和安装包保留。
 
 ## 顶层许可证：MIT
 
@@ -25,6 +25,7 @@ WAA 执行真实下载的挑战程序并生成 proof；vendor 中的浏览器接
 | 组件 | 作用 | 许可或核对位置 |
 | --- | --- | --- |
 | [Mag1cFall/goja](https://github.com/Mag1cFall/goja)，以及 Go URL/文本等依赖 | JavaScript VM 和浏览器宿主基础 | `runtime/go.mod`、`runtime/vendor/modules.txt` 及各目录 LICENSE；包含 MIT/BSD/Apache 等许可和附加声明 |
+| [golang.org/x/net v0.60.0](https://pkg.go.dev/golang.org/x/net@v0.60.0/idna) | WAA URL 解析间接使用的 IDNA 实现 | `runtime/go.sum` 和 `runtime/vendor/golang.org/x/net`。0.5.0 更新以包含 [GO-2026-5026](https://pkg.go.dev/vuln/GO-2026-5026) 的修复 |
 | [Go](https://go.dev/) | 构建 Android WAA 可执行组件 | `app/src/main/assets/third_party/go` 中保留 Go 许可、专利声明与 vendor notices |
 | [Mozilla GeckoView](https://mozilla.github.io/geckoview/) | 应用内登录浏览器 | MPL-2.0 及内含第三方许可；下节记录精确源码 |
 | [Chaquopy](https://chaquo.com/chaquopy/) / [CPython](https://www.python.org/) | 将 Python 嵌入 Android | `Chaquopy-LICENSE.txt`、`CPython-LICENSE.txt`；MIT / Python 及其历史许可 |

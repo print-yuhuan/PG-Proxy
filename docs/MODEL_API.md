@@ -1,6 +1,6 @@
 # 模型目录与 API 使用说明
 
-本文说明 **PG Proxy 0.4.0** 的在线模型目录、能力字段和接口限制；接口资料核对日期为 **2026-10-30**。0.4.0 未调整模型协议，以下历史上游验收不等于本版本已逐项重新测试。19 个模型逐项生成及代表性功能的历史结果来自 0.1.0，见 [Pixel 10 模型能力记录](MODEL_CAPABILITIES_TEST.md)；0.3.0 新包已在 Pixel 10 模拟器重新读取 19 项目录，并以 `gemini-3.8-flash` 验证真实生成、流式与强制 WAA 更新，见[0.3.0 验证记录](VALIDATION.md#pixel-10-新包与真实请求)。
+本文说明 **PG Proxy 0.5.0** 的在线模型目录、能力字段和接口限制。各版本的实际验证按环境记录。19 个模型逐项生成及代表性功能的历史结果来自 0.1.0，见 [Pixel 10 模型能力记录](MODEL_CAPABILITIES_TEST.md)。0.3.0 在 Pixel 10 模拟器重新读取了 19 项目录，并以 `gemini-3.8-flash` 验证真实生成、流式与强制 WAA 更新，见[0.3.0 验证记录](VALIDATION.md#pixel-10-新包与真实请求)。
 
 **模型列表在线获取，不是固定名单。** PG Proxy 使用已登录凭证读取 Playground `ListModels`，默认缓存最多 300 秒。新增模型符合当前生成通道的筛选条件即可进入目录；缺少可靠资料的能力保留为 `null` 或省略。
 
@@ -98,6 +98,7 @@ curl --fail-with-body http://127.0.0.1:8888/v1beta/models/gemini-4-argon \
 基础参数包括采样、输出上限、停止词和 `response_format`，其余参数按模型能力列出：
 
 - `reasoning_effort`：至少能表达一种有效思考级别或零预算时提供；具有思考能力的模型不一定支持此参数。
+- OpenAI 的 `xhigh`、`extra_high`、`max` 和 Gemini 的 `EXTRA_HIGH` 思考级别按所用凭证的在线目录选档。模型支持 `EXTRA_HIGH` 时使用此档，否则在模型支持 `HIGH` 时使用 `HIGH`。
 - `thinking_config`：同时提供 `reasoning_effort` 时，以显式 `thinking_config` 为准。
 - `image_config`：图像模型允许配置比例或尺寸时提供。
 - 工具、函数调用、媒体分辨率和转写参数：仅在对应能力允许时提供。
@@ -179,7 +180,7 @@ curl --fail-with-body --get http://127.0.0.1:8888/v1beta/models \
 | `reasoning.budget_supported` | 是否支持预算控制 |
 | `reasoning.level_supported` | 是否支持级别控制 |
 | `reasoning.budget` | 条件存在；其中 `default`、`min`、`max`、`can_disable` 仅在有对应资料时提供 |
-| `reasoning.levels` | 条件存在；当前模型允许的 `LOW`、`MEDIUM`、`HIGH`、`MINIMAL` 子集 |
+| `reasoning.levels` | 当前模型声明的 `LOW`、`MEDIUM`、`HIGH`、`MINIMAL`、`EXTRA_HIGH` 子集，在支持思考级别时提供 |
 | `reasoning.default_level` | 目录明确给出且属于允许级别时提供 |
 | `limits.input_tokens` | 当前目录输入上限 |
 | `limits.output_tokens` | 当前目录原始输出上限 |
@@ -322,7 +323,7 @@ curl --fail-with-body \
 
 | 功能 | 当前行为 |
 | --- | --- |
-| 函数调用 | 依据模型能力支持函数声明、函数调用／结果、ID 与签名回传；Google `AUTO`／`NONE`、OpenAI `auto`／`none`；原生允许在已声明函数内选择 `allowedFunctionNames` 子集 |
+| 函数调用 | 依据模型能力支持函数声明、函数调用／结果、ID 与签名回传。Google 支持 `AUTO`／`NONE`，OpenAI 支持 `auto`／`none`。原生允许在已声明函数内选择 `allowedFunctionNames` 子集。超过 63 个 UTF-8 字节的名称由代理映射后发送，客户端继续使用原名。函数结果按 JavaScript 对象键顺序编码。 |
 | 强制函数调用 | Google `ANY`／`VALIDATED`、OpenAI `required`／指定函数名称退回 `AUTO`／`auto`；不承诺强制调用，不以提示词模拟约束 |
 | 并行函数参数 | 忽略无法执行的 OpenAI `parallel_tool_calls: false` 限制；`true` 配合有效函数声明使用 |
 | JSON 输出 | 支持文本、JSON 对象和可编码的 JSON Schema 子集；忽略 `strict: true` 和未实现约束；响应与函数参数 Schema 共享展开预算，超限整体放弃当前可选 Schema，保留可用格式设置，不承诺严格校验输出 |

@@ -7,10 +7,9 @@ The defaults below are deterministic and normalization never changes its input.
 import copy
 import json
 import math
-import re
 
 from .errors import PlaygroundError
-from .playground_protocol import invalid
+from .playground_protocol import invalid, valid_identifier
 
 
 _TOP = {
@@ -21,7 +20,7 @@ _TOP = {
     'speech_config', 'transcription_config', 'media_resolution',
 }
 _BUILTINS = {'google_search', 'image_search', 'code_execution', 'url_context', 'google_maps'}
-_NAME = re.compile(r'[A-Za-z_][A-Za-z0-9_.:-]{0,63}')
+REASONING_EFFORTS = {'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'extra_high', 'max'}
 
 
 def _pick(value, keys):
@@ -219,7 +218,7 @@ def _tools(value):
         elif kind == 'function' and isinstance(tool.get('function'), dict):
             function = _pick(tool['function'], {'name', 'description', 'parameters'})
             name = function.get('name')
-            if not isinstance(name, str) or not _NAME.fullmatch(name):
+            if not valid_identifier(name):
                 continue
             if name in names:
                 continue
@@ -245,7 +244,7 @@ def _format(value):
         if not isinstance(schema, dict) or not isinstance(schema.get('schema'), dict):
             return {'type': 'json_object'}
         schema = _pick(schema, {'name', 'description', 'schema'})
-        if not isinstance(schema.get('name'), str) or not _NAME.fullmatch(schema['name']):
+        if not valid_identifier(schema.get('name')) or len(schema['name']) > 64:
             schema['name'] = 'response'
         if not isinstance(schema.get('description'), str):
             schema.pop('description', None)
@@ -283,7 +282,7 @@ def normalize_openai_request(body):
         if key in request and not isinstance(request[key], dict):
             request.pop(key)
     effort = request.get('reasoning_effort')
-    if 'thinking_config' in request or not isinstance(effort, str) or effort not in ('none', 'minimal', 'low', 'medium', 'high'):
+    if 'thinking_config' in request or not isinstance(effort, str) or effort not in REASONING_EFFORTS:
         request.pop('reasoning_effort', None)
     if 'modalities' in request:
         values = request['modalities']

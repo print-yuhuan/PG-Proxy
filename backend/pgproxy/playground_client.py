@@ -10,13 +10,14 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 import httpx
 from .config import Settings, ORIGIN, RPC_BASE
+from .cooldown import CooldownError, retry_deadline
 from .errors import PlaygroundError
 from .request_logging import note_upstream, register_secrets, set_stage
 from .gemini_compat import normalize_gemini_request, normalize_count_tokens_request
 from .session import GoogleSession
 from .waa import UnavailableWAA, WAA_URL, WAA_KEY, WAA_API_KEY, parse_challenge, load_interpreter
 from .playground_protocol import (loads, parse_models, encode_generate, iter_frames, decode_frame,
-                                  encode_logging_context, CONTINUATION_ROUND_TOKENS)
+                                  encode_logging_context, restore_function_names, CONTINUATION_ROUND_TOKENS)
 
 
 def parse_page_toggles(text):
@@ -55,6 +56,7 @@ class PlaygroundClient:
         self.challenge = None
         self.interpreter = None
         self.cooldown_until = 0
+        self.cooldown_deadline = 0
         self.closed = False
         self.generation_verified = False
 
@@ -89,9 +91,9 @@ class PlaygroundClient:
         try:
             if self.closed:
                 raise PlaygroundError('Playground client is closed',503)
-            remaining = int(self.cooldown_until-time.monotonic())
-            if remaining>0:
-                raise PlaygroundError('Upstream rate limit cooldown active',429,'rate_limit',str(remaining+1))
+            remaining = self.cooldown_until - time.monotonic()
+            if remaining > 0:
+                raise CooldownError(self.cooldown_deadline, remaining)
             await self._load_session()
             yield
         except httpx.TimeoutException as failure:
@@ -206,10 +208,12 @@ class PlaygroundClient:
                 raise error
             return
         status = response.status_code
+        if status == 429:
+            raise await self._rate_limit(response, 'POST')
         raw, upstream_code = await self._error_context(response)
         note_upstream('POST',str(response.url),status=status,code=upstream_code,raw=raw)
-        def failed(message, public_status, code, retry_after=None):
-            error = PlaygroundError(message,public_status,code,retry_after)
+        def failed(message, public_status, code):
+            error = PlaygroundError(message,public_status,code)
             error.diagnostic_raw = raw or message
             error.diagnostic_status = status
             error.diagnostic_upstream_code = upstream_code
@@ -220,19 +224,20 @@ class PlaygroundClient:
         if status in (401,403) or 300 <= status <400:
             self.api_key = ''; self.waa_at = 0
             raise failed(f'{method} rejected the Google session (HTTP {status}); verify account access in AI Studio and re-import cookies',status if status in (401,403) else 503,'upstream_authentication_error')
-        if status == 429:
-            from email.utils import parsedate_to_datetime
-            retry = response.headers.get('retry-after','60')
-            try:
-                seconds = int(retry)
-            except ValueError:
-                try:
-                    seconds = max(1,int(parsedate_to_datetime(retry).timestamp()-time.time()))
-                except (ValueError,TypeError,OverflowError):
-                    seconds = 60
-            self.cooldown_until = time.monotonic()+max(1,seconds)
-            raise failed('Playground rate limit reached; no automatic generation retry',429,'rate_limit',str(max(1,seconds)))
         raise failed(f'{method} upstream HTTP {status}', status if status in (400,404) else 502,'upstream_error')
+
+    async def _rate_limit(self, response, method):
+        now = time.time()
+        self.cooldown_deadline = retry_deadline(response.headers.get('retry-after'), now)
+        self.cooldown_until = time.monotonic() + (self.cooldown_deadline - now)
+        raw, upstream_code = await self._error_context(response)
+        note_upstream(method, str(response.url), status=429, code=upstream_code, raw=raw)
+        remaining = self.cooldown_until - time.monotonic()
+        error = CooldownError(self.cooldown_deadline, remaining, 'Playground rate limit reached')
+        error.diagnostic_raw = raw or str(error)
+        error.diagnostic_status = response.status_code
+        error.diagnostic_upstream_code = upstream_code
+        return error
 
     async def _rpc(self,method,body,key=None,*,tier=False):
         note_upstream('POST',RPC_BASE+method)
@@ -259,6 +264,8 @@ class PlaygroundClient:
                 target = location
                 continue
             if response.status_code != 200:
+                if response.status_code == 429:
+                    raise await self._rate_limit(response, 'GET')
                 raw, code = await self._error_context(response)
                 note_upstream('GET',target,status=response.status_code,code=code,raw=raw)
                 error = PlaygroundError(f'AI Studio page HTTP {response.status_code}',503,'page_initialization_failed')
@@ -316,6 +323,11 @@ class PlaygroundClient:
             set_stage('model_catalog')
             return await self._models()
 
+    def cached_model_support(self, model):
+        if self.models_at and time.monotonic() - self.models_at < self.settings.model_ttl:
+            return model in self.catalog
+        return None
+
     async def count_tokens(self, model_id, request):
         from .token_protocol import encode_count_tokens, decode_token_count
         model_id = model_id.removeprefix('models/')
@@ -367,14 +379,16 @@ class PlaygroundClient:
             model = models[model_id]
             set_stage('request_encoding')
             request = normalize_gemini_request(request, model)
-            wire,binding,page_prompt = encode_generate(model_id,request,model,self.settings.timezone)
+            function_aliases = {}
+            wire,binding,page_prompt = encode_generate(model_id,request,model,self.settings.timezone,
+                                                        function_aliases=function_aliases)
             register_secrets(page_prompt)
             continuable = 91 in model.get('_codes',[])
             total = request.get('generationConfig',{}).get('maxOutputTokens',model['outputTokenLimit'])
             rounds = (total+CONTINUATION_ROUND_TOKENS-1)//CONTINUATION_ROUND_TOKENS if continuable else 1
             continuation_token, previous_usage = None, None
             used_tokens = set()
-            visible = False
+            visible = has_output = False
             for round_index in range(rounds):
                 if round_index:
                     wire,binding,page_prompt = encode_generate(model_id,request,model,self.settings.timezone,
@@ -396,7 +410,7 @@ class PlaygroundClient:
                 response = await self.http.send(self.http.build_request('POST',RPC_BASE+'GenerateContent',headers=self._headers(tier=True),
                     content=json.dumps(wire,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode()),stream=True)
                 finished = need_continuation = False
-                latest_token, round_usage, terminal, round_finish_code = None, None, None, None
+                latest_token, round_usage, terminal, round_finish_reason = None, None, None, None
                 try:
                     await self._check(response,'GenerateContent')
                     set_stage('response_parsing')
@@ -404,32 +418,40 @@ class PlaygroundClient:
                         result = decode_frame(frame,continuable=continuable)
                         if result is None:
                             continue
+                        restore_function_names(result,function_aliases)
                         frame_token = result.pop('_continuationToken',None)
                         finish_code = result.pop('_finishCode',None)
                         if frame_token:
                             latest_token = frame_token
-                        visible |= any(not p.get('thought') and (
-                            bool(p.get('text')) or bool(p.get('inlineData',{}).get('data'))
-                            or bool(p.get('functionCall')) or bool(p.get('codeExecutionResult')))
-                            for c in result.get('candidates',[])
-                            for p in c.get('content',{}).get('parts',[]))
-                        is_terminal = 'promptFeedback' in result or any('finishReason' in c for c in result.get('candidates',[]))
-                        if not continuable:
-                            finished |= is_terminal
-                            yield result
-                            continue
+                        candidate = next(iter(result.get('candidates',[])),{})
+                        parts = candidate.get('content',{}).get('parts',[])
+                        reason = candidate.get('finishReason')
+                        is_terminal = 'promptFeedback' in result or reason is not None
+                        for part in parts:
+                            if part.get('thought'):
+                                continue
+                            visible_part = bool(part.get('text') or part.get('inlineData',{}).get('data')
+                                                or part.get('functionCall') or part.get('codeExecutionResult'))
+                            visible |= visible_part
+                            has_output |= bool(visible_part or part.get('functionResponse') or part.get('executableCode')
+                                               or part.get('toolCall') or part.get('toolResponse')
+                                               or part.get('transcriptionMetadata',{}).get('timestamps'))
                         if 'usageMetadata' in result:
-                            round_usage = result.pop('usageMetadata')
+                            round_usage = result['usageMetadata']
+                            if continuable:
+                                result.pop('usageMetadata')
                         if finished:
-                            # A trailing metadata frame may finalize usage after the finish marker.
-                            # Do not duplicate terminal events or accept new content after completion.
-                            if ('promptFeedback' in result or finish_code not in (None,round_finish_code)
-                                    or any(c.get('content',{}).get('parts') for c in result.get('candidates',[]))):
+                            if 'promptFeedback' in result or reason not in (None,round_finish_reason) or parts:
                                 raise PlaygroundError('Playground returned content after a finish frame',code='protocol_error')
+                            if not continuable and terminal.get('candidates'):
+                                # Late citations and usage can complete the final candidate.
+                                terminal['candidates'][0].update(
+                                    (key,value) for key,value in candidate.items()
+                                    if key not in {'index','content','finishReason'})
                             continue
                         if is_terminal:
                             finished = True
-                            round_finish_code = finish_code
+                            round_finish_reason = reason
                             can_continue = round_index+1 < rounds
                             requested_continuation = finish_code == 22 or (finish_code == 2 and frame_token and can_continue)
                             if requested_continuation:
@@ -451,17 +473,25 @@ class PlaygroundClient:
                         raise PlaygroundError('Playground stream ended without a finish frame',code='stream_interrupted')
                 finally:
                     await response.aclose()
-                if not need_continuation:
-                    if terminal is not None:
-                        if round_usage is not None:
-                            terminal['usageMetadata'] = self._continued_usage(previous_usage,round_usage)
-                        yield terminal
-                    self.generation_verified |= bool(visible)
-                    return
+                if need_continuation:
+                    if round_usage is not None:
+                        previous_usage = self._continued_usage(previous_usage,round_usage)
+                    continuation_token = latest_token
+                    used_tokens.add(continuation_token)
+                    continue
+                malformed = round_finish_reason == 'MALFORMED_RESPONSE' or (
+                    not has_output and round_finish_reason in {
+                        'STOP','MALFORMED_FUNCTION_CALL','UNEXPECTED_TOOL_CALL'})
+                if malformed:
+                    error = PlaygroundError('Playground returned no complete generation',code='protocol_error')
+                    if round_finish_reason != 'STOP':
+                        error.diagnostic_upstream_code = round_finish_reason
+                    raise error
                 if round_usage is not None:
-                    previous_usage = self._continued_usage(previous_usage,round_usage)
-                continuation_token = latest_token
-                used_tokens.add(continuation_token)
+                    terminal['usageMetadata'] = self._continued_usage(previous_usage,round_usage)
+                yield terminal
+                self.generation_verified |= bool(visible)
+                return
 
     @staticmethod
     def _continued_usage(previous, current):

@@ -43,6 +43,17 @@ def test_count_tokens_is_only_advertised_if_the_upstream_catalog_lists_it():
     assert 'countTokens' not in native_model(entry)['supportedGenerationMethods']
 
 
+def test_extra_high_catalog_uses_declared_listmodels_level():
+    row = model_row()
+    row[71][5] = 5
+    row[71][6] = [3, 5]
+    entry = catalog(row)['test-chat']
+    for public in (native_model(entry), openai_model(entry)):
+        reasoning = public['pg_proxy']['proxy']['reasoning']
+        assert reasoning['levels'] == ['HIGH', 'EXTRA_HIGH']
+        assert reasoning['default_level'] == 'EXTRA_HIGH'
+
+
 def test_future_model_still_listed_with_unknown_modalities_not_guessed_from_name():
     row = model_row('models/future-image-audio-model')
     row[64] = [1,3,5,6,7,43]

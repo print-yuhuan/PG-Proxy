@@ -1,6 +1,7 @@
 package waa
 
 import (
+	"bytes"
 	cryptorand "crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -11,10 +12,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Mag1cFall/goja"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/htmlindex"
+	"golang.org/x/text/transform"
 )
 
 // maxCallStackDepth 为 JavaScript 调用栈深度上限，超过时抛出 InternalError
@@ -388,16 +391,43 @@ func encodingName(label string) string {
 
 // decodeText 以 WHATWG 编码解码字节，fatal 时遇到无效序列返回错误
 func decodeText(name string, data []byte, fatal bool) (string, error) {
-	encoder, err := htmlindex.Get(name)
+	codec, err := htmlindex.Get(name)
 	if err != nil {
 		return "", err
 	}
-	decoded, err := encoder.NewDecoder().Bytes(data)
+	decoded, err := codec.NewDecoder().Bytes(data)
 	if err != nil {
 		return "", err
 	}
-	if fatal && strings.ContainsRune(string(decoded), '�') && !strings.ContainsRune(string(data), '�') {
+	if fatal && bytes.ContainsRune(decoded, utf8.RuneError) && hasInvalidReplacement(codec, data) {
 		return "", encoding.ErrInvalidUTF8
 	}
 	return string(decoded), nil
+}
+
+func hasInvalidReplacement(codec encoding.Encoding, data []byte) bool {
+	literal := []byte(string(utf8.RuneError))
+	encodedLiteral, err := codec.NewEncoder().Bytes(literal)
+	if err != nil {
+		return true
+	}
+	decoder := codec.NewDecoder()
+	var output [utf8.UTFMax]byte
+	for len(data) != 0 {
+		// Fit exactly one U+FFFD, so its original bytes cannot be confused
+		// with surrounding characters. Make room for a supplementary rune
+		// when it is first in the next piece of input.
+		written, consumed, err := decoder.Transform(output[:len(literal)], data, true)
+		if consumed == 0 && err == transform.ErrShortDst {
+			written, consumed, err = decoder.Transform(output[:], data, true)
+		}
+		if consumed == 0 || (err != nil && err != transform.ErrShortDst) {
+			return true
+		}
+		if bytes.Equal(output[:written], literal) && !bytes.Equal(data[:consumed], encodedLiteral) {
+			return true
+		}
+		data = data[consumed:]
+	}
+	return false
 }

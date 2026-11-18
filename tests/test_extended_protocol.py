@@ -225,6 +225,19 @@ def test_function_wire_round_trip_ids_signatures_and_binding():
     assert signature_only[0][14] == 'from-upstream' and signature_only[1] == ''
 
 
+def test_function_results_use_javascript_key_order_without_changing_call_arguments():
+    data = {'z': [{'second': 2, 'first': 1, '1': 1}], '10': 10, '2': 2, '00': 0,
+            'a': 0, '4294967295': 1, '4294967294': 0, '0': 3, '+1': 1}
+    result, _ = encode_part({'functionResponse': {'name': 'weather', 'response': data}})
+    call, _ = encode_part({'functionCall': {'name': 'weather', 'args': data}})
+    decoded_result = decode_struct(result[11][1])
+    decoded_call = decode_struct(call[10][1])
+    assert list(decoded_result) == ['0', '2', '10', '4294967294', 'z', '00', 'a', '4294967295', '+1']
+    assert list(decoded_result['z'][0]) == ['1', 'second', 'first']
+    assert list(decoded_call) == sorted(data)
+    assert list(decoded_call['z'][0]) == ['1', 'first', 'second']
+
+
 def test_tools_schema_subsets_timezone_and_server_side_invocations():
     functions = [{'name':'weather','parameters':{'type':'object','properties':{'city':{'type':'string'}},'required':['city']}},
                  {'name':'unused'}]

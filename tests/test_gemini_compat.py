@@ -103,6 +103,36 @@ def test_thinking_level_precedes_budget_and_catalog_drives_voice_and_image_defau
     assert image['generationConfig']['imageConfig'] == {'imageSize': '2K'}
 
 
+@pytest.mark.parametrize('native,effort', [(True, 'EXTRA_HIGH'), (True, 'xhigh'),
+                                           (False, 'xhigh'), (False, 'extra_high'), (False, 'max')])
+@pytest.mark.parametrize('levels,wire_level', [([3, 5], 6), ([3], 3), ([2], None)])
+def test_extra_high_uses_verified_wire_level_and_supported_high_fallback(client_factory, native, effort,
+                                                                        levels, wire_level):
+    def upstream(request):
+        if request.url.path.endswith('/ListModels'):
+            row = model_row()
+            row[71][6] = levels
+            return httpx.Response(200, json=[[row]])
+
+    client, requests = client_factory(extra_handler=upstream)
+    if native:
+        path = '/v1beta/models/test-chat:generateContent'
+        payload = body(generationConfig={'thinkingConfig': {'thinkingLevel': effort}})
+    else:
+        path = '/v1/chat/completions'
+        payload = {'model': 'test-chat', 'messages': [{'role': 'user', 'content': 'Hello'}],
+                   'reasoning_effort': effort}
+    with TestClient(create_app(client)) as api:
+        response = api.post(path, json=payload, headers={'Authorization': 'Bearer ' + client.settings.password})
+        assert response.status_code == 200, response.text
+    call = next(request for request in requests if request.url.path.endswith('/GenerateContent'))
+    config = json.loads(call.content)[3]
+    if wire_level is None:
+        assert len(config) <= 16 or config[16] is None
+    else:
+        assert config[16][3] == wire_level
+
+
 def test_system_prompt_and_native_history_metadata_are_preserved():
     source = body(systemInstruction={'parts': [{'text': 'Follow this instruction', 'cache_control': {}}]},
                   generationConfig={'responseSchema': {'type': 'object', 'example': {'answer': 1}, 'additionalProperties': True}})

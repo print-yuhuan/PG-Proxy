@@ -1,6 +1,6 @@
 # 构建与维护
 
-本页介绍 PG Proxy **0.4.0** 的构建、测试、签名与发布流程。应用由 Android/Kotlin 界面、GeckoView 登录浏览器、Chaquopy Python 服务和 Goja WAA 工作进程组成；安装后可在手机上独立运行。
+本页介绍 PG Proxy **0.5.0** 的构建、测试、签名与发布流程。应用由 Android/Kotlin 界面、GeckoView 登录浏览器、Chaquopy Python 服务和 Goja WAA 工作进程组成；安装后可在手机上独立运行。
 
 源码采用标准 [MIT 许可证](../LICENSE)。维护者可通过 [GitHub Releases](https://github.com/print-yuhuan/PG-Proxy/releases) 提供正式签名安装包，使用者也可自行构建或依适用许可证再分发。APK、签名材料和本机构建产物不提交到 Git；经核验的 APK 与公开校验清单可作为 Release 附件。
 
@@ -27,11 +27,11 @@
 | GeckoView | `159.0.20261022150525` | `app/build.gradle` |
 | Pydantic／pydantic-core | `2.14.1`／`2.50.1` | requirements、Gradle 与 wheel 构建脚本 |
 | Android ABI | `arm64-v8a`、`x86_64` | `app/build.gradle` |
-| PG Proxy 版本 | `versionName 0.4.0`、`versionCode 40` | `app/build.gradle` |
+| PG Proxy 版本 | `versionName 0.5.0`、`versionCode 50` | `app/build.gradle` |
 
 以上是仓库当前锁定或开发阶段使用的版本，不代表任意更新版本均兼容。Android 设备最低为 Android 9 / API 28，目前没有 32 位 ARM 安装包。
 
-当前显示版本为 `0.4.0`，内部版本码为 `40`；后端 `VERSION` 与 Gecko 桥接扩展版本同步为 `0.4.0`。今后的应用更新应递增内部版本码，并保持正式签名身份一致。
+当前显示版本为 `0.5.0`，内部版本码为 `50`。后端 `VERSION` 与 Gecko 桥接扩展版本同步为 `0.5.0`。后续常规更新应递增内部版本码并使用同一正式证书。
 
 Windows 还需要安装 Visual Studio 或 Build Tools 的 **“使用 C++ 的桌面开发”** 工作负载、Windows SDK，以及 Android SDK Platform Tools。首次使用 Android SDK 前，请通过 Android Studio 或 `sdkmanager --licenses` 自行阅读并接受所需许可。安装 Android SDK 37.2 和指定 NDK，避免让脚本误选另一版 NDK。
 
@@ -84,9 +84,9 @@ py -3.14 -m venv .venv
 默认 Debug 输出位于 Git 忽略的 `artifacts/`；正式签名构建见下一节：
 
 ```text
-PG-Proxy-0.4.0-arm64-v8a.apk
-PG-Proxy-0.4.0-x86_64.apk
-PG-Proxy-0.4.0-x86_64-androidTest.apk   # 使用 --tests 时
+PG-Proxy-0.5.0-arm64-v8a.apk
+PG-Proxy-0.5.0-x86_64.apk
+PG-Proxy-0.5.0-x86_64-androidTest.apk   # 使用 --tests 时
 pg-proxy-apks.json                   # 版本、ABI、源码状态、SHA-256 等
 runtime/manifest.json
 wheels/build-report.json
@@ -99,7 +99,7 @@ wheels/build-report.json
 ```powershell
 adb devices -l
 adb -s emulator-5554 shell getprop ro.boot.qemu.avd_name
-adb -s emulator-5554 install -r artifacts\PG-Proxy-0.4.0-x86_64.apk
+adb -s emulator-5554 install -r artifacts\PG-Proxy-0.5.0-x86_64.apk
 adb -s emulator-5554 shell am start -n dev.pgproxy.app/.MainActivity
 ```
 
@@ -118,12 +118,12 @@ adb -s emulator-5554 shell am start -n dev.pgproxy.app/.MainActivity
 | `PG_SIGNING_KEY_ALIAS` | 发布密钥别名 |
 | `PG_SIGNING_KEY_PASSWORD` | 发布密钥密码 |
 
-本项目本地签名路径约定为 `D:\PG-Proxy\signing\pg-proxy-release.p12`，私有配置为同目录 `signing.json`。后者仅用于本机受控加载，不是要随源码创建或分享的示例文件；`tools/build_app.py` 仍通过上表环境变量读取签名配置。
+0.5.0 的维护者签名材料保存在工作区外的受控本地目录 `%LOCALAPPDATA%\PG-Proxy-Signing`。密钥库名为 `pg-proxy-release.p12`，私有配置为同目录 `signing.json`。`tools/build_app.py` 仍通过上表环境变量读取签名配置。
 
-已有有效正式签名时继续使用原密钥，不要每次发布都新建。0.4.0 沿用 0.2.0／0.3.0／0.3.1 的正式签名；0.1.0 的签名材料已不可用，0.2.0 曾因此更换签名，这一历史变更仍影响旧 0.1.0 包升级，详见下文。首次自行生成密钥，可用 JDK 的 `keytool` 交互输入密码，例如：
+已有有效正式签名时继续使用对应密钥。0.2.0 至 0.4.0 使用同一证书。该密钥遗失后，0.5.0 更换证书。首次自行生成密钥时，可用 JDK 的 `keytool` 交互输入密码。
 
 ```powershell
-keytool -genkeypair -keystore 'D:\PG-Proxy\signing\pg-proxy-release.p12' `
+keytool -genkeypair -keystore 'D:\PrivateSigning\my-pg-proxy-release.p12' `
   -storetype PKCS12 -alias pgproxy-release -keyalg RSA -keysize 3072 `
   -validity 10000 -dname 'CN=PG Proxy'
 ```
@@ -152,7 +152,7 @@ function Read-SigningPassword([string]$Prompt) {
   }
 }
 
-$env:PG_SIGNING_STORE_FILE = 'D:\PG-Proxy\signing\pg-proxy-release.p12'
+$env:PG_SIGNING_STORE_FILE = Join-Path $env:LOCALAPPDATA 'PG-Proxy-Signing\pg-proxy-release.p12'
 $env:PG_SIGNING_KEY_ALIAS = 'pgproxy-release'
 try {
   $env:PG_SIGNING_STORE_PASSWORD = Read-SigningPassword '密钥库密码'
@@ -168,19 +168,25 @@ finally {
 
 环境变量会在本次构建进程中成为明文，应仅在可信本机运行，完成后清理。上述命令适用于已有 Go 原生组件与 Python wheel 的环境；首次完整构建将 `--skip-native-build` 换为 `--build-wheels --bootstrap-rust`，缓存齐全时才可增加 `--offline`。
 
-ARM64 Release 输出为 `artifacts/PG-Proxy-0.4.0-arm64-v8a-release.apk` 和 `artifacts/pg-proxy-release-apks.json`。归档检查包括 APK 签名、证书与配置密钥库是否匹配，以及应用是否关闭调试标记；正式签名不等同于 Google、应用商店或第三方安全认证。使用 `--build-type release --package-only` 时仍需 Android SDK、JDK 和上述四个变量，仅归档已有包，不重新编译。
+ARM64 Release 输出为 `artifacts/PG-Proxy-0.5.0-arm64-v8a-release.apk` 和 `artifacts/pg-proxy-release-apks.json`。归档检查包括 APK 签名、证书与配置密钥库是否匹配，以及应用是否关闭调试标记；正式签名不等同于 Google、应用商店或第三方安全认证。使用 `--build-type release --package-only` 时仍需 Android SDK、JDK 和上述四个变量，仅归档已有包，不重新编译。
 
 ### 安装与后续更新
 
-**0.4.0 继续使用 0.2.0 的正式签名，版本码递增至 40，可覆盖同签名的 0.2.0／0.3.0／0.3.1 正式包。** 常规覆盖更新保留应用私有配置、凭证与浏览器会话；不要为正常升级主动卸载或清除数据。Google 会话本身仍可能过期。
+**0.5.0 的版本码为 50，使用新的正式签名。0.4.0 及更早的正式包无法直接覆盖升级到 0.5.0。** 从旧版升级时，先记录必要设置，再卸载旧版、安装 0.5.0 并在应用内重新登录。卸载会删除旧包的应用私有配置、凭证和 Gecko 会话。
 
-**历史 0.1.0 正式包不能直接覆盖到 0.2.0 或后续版本。** 0.1.0 签名材料已不可用，0.2.0 曾更换签名。从旧 0.1.0 升级时，先记录端口、访问范围等必要设置，再卸载旧版、安装当前版并重新登录添加凭证。卸载会删除应用私有配置、凭证和浏览器会话；清除数据同样会删除这些资料，且仅清数据不能解决签名冲突。
+历史 0.1.0 使用独立的证书，签名材料已不可用。应用 ID 继续使用 `dev.pgproxy.app`。
 
-0.2.0 起的正式版本应持续保持包名和签名身份一致。不同电脑的 Debug 签名、自行生成的签名与维护者发布签名可能不同，覆盖安装前仍需核对。
+0.5.0 起的正式更新应持续使用同一应用 ID 和正式签名，以支持保留数据的覆盖安装。不同电脑的 Debug 签名和自行生成的签名可能与正式签名不同，覆盖安装前应核对证书。
 
 项目没有内置自动更新。不要提交 `signing/`、`signing.json`、`*.jks`、`*.keystore`、`*.p12`、签名密码或包含这些材料的归档；公开材料仅提供签名证书指纹。
 
-**0.2.0 起沿用、0.4.0 继续使用的正式签名**公有证书 SHA-256 为：
+**0.5.0 正式签名**的公有证书 SHA-256 为
+
+```text
+8696b785394a5d145d33515097ff9a3a3629a0eb1946bb653728758935d01072
+```
+
+**0.2.0 至 0.4.0 的历史正式签名**的公有证书 SHA-256 为
 
 ```text
 e7c43a66f990d01ed2bdb9d967db5b1df905e3527c31fcabac37f46f6017b39d
@@ -213,7 +219,7 @@ e7c43a66f990d01ed2bdb9d967db5b1df905e3527c31fcabac37f46f6017b39d
 先构建主 APK 和匹配架构的测试 APK，再按需执行指定测试类：
 
 ```powershell
-adb -s emulator-5554 install -r artifacts\PG-Proxy-0.4.0-x86_64-androidTest.apk
+adb -s emulator-5554 install -r artifacts\PG-Proxy-0.5.0-x86_64-androidTest.apk
 adb -s emulator-5554 shell am instrument -w -e class 'dev.pgproxy.app.UIInstrumentedTest,dev.pgproxy.app.MotionInstrumentedTest,dev.pgproxy.app.RuntimeInstrumentedTest,dev.pgproxy.app.GeckoProfilesTest,dev.pgproxy.app.ProfileStorageIoInstrumentedTest,dev.pgproxy.app.ReviewRegressionInstrumentedTest,dev.pgproxy.app.DeletionRecoveryInstrumentedTest,dev.pgproxy.app.ProxyConnectorInstrumentedTest,dev.pgproxy.app.ForegroundStateInstrumentedTest,dev.pgproxy.app.WakeLockInstrumentedTest,dev.pgproxy.app.BackgroundSettingsInstrumentedTest,dev.pgproxy.app.BackgroundRuntimeInstrumentedTest' dev.pgproxy.app.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
@@ -271,7 +277,9 @@ WAA 必须实际执行上游挑战程序，生成与请求绑定的 proof。遇�
 
 `AccountPool` 使用一个全局 `asyncio.Lock`。生成请求先通过 `queued()` 等待获得锁，再由 `_select()` 从当前符合条件且支持目标模型的凭证中轮询选择；锁一直保持到生成流结束或取消清理完成。空闲账号不会绕过该锁并行生成。模型目录、凭证检查及导入等操作也使用同一锁。
 
-`queueTimeout` 默认 30 秒，限制等待获得锁的时间；锁提前释放就立即继续，不等待凑满该时长。等待超时返回 `429 / account_busy` 和 `Retry-After: 5`，不会选择账号、推进轮询位置或自动重试。A、B 状态稳定且都支持模型时，A 结束后的下一次生成使用 B；选取时会重新考虑停用、登录错误、校验错误、删除及冷却状态。上游已经收到的生成不会自动跨账号重放。
+`queueTimeout` 默认 30 秒，限制等锁和等待凭证短暂冷却的总时间。冷却等待期间释放全局锁。若最早可用凭证的恢复时间晚于请求期限，返回 `429 / rate_limit`，并通过 `Retry-After` 给出剩余秒数。单纯等锁超时返回 `429 / account_busy` 和 `Retry-After: 5`。两种情况都发生在生成转发前。
+
+上游 `Retry-After` 支持秒数和 HTTP 日期，缺失或无效时使用 60 秒，单次冷却最多 24 小时。凭证检查也遵守仍有效的已保存冷却。A、B 状态稳定且都支持模型时，A 结束后的下一次生成使用 B。选取时重新考虑停用、登录错误、校验错误、删除和冷却状态。上游已经收到的生成不会自动跨账号重放。
 
 当前策略保留每个账号的 HTTP／Cookie 状态，并在切换账号时释放其他账号的 WAA worker，最多保留一个常驻 WAA VM。若以后实现多账号并发，必须同时重新设计 worker 生命周期、在途删除、取消、停止清理及资源上限，不能只移除全局锁。
 
@@ -385,12 +393,12 @@ git rev-parse HEAD
 .venv\Scripts\python.exe tools\build_app.py --build-type release --abi arm64-v8a --build-wheels --bootstrap-rust
 if ($LASTEXITCODE -ne 0) { throw '正式构建失败，停止发布' }
 git status --short
-Get-FileHash artifacts\PG-Proxy-0.4.0-arm64-v8a-release.apk -Algorithm SHA256
+Get-FileHash artifacts\PG-Proxy-0.5.0-arm64-v8a-release.apk -Algorithm SHA256
 ```
 
 已有与该源码及锁定依赖匹配的 Go 组件、Python wheel 和完整缓存时，可使用 `--skip-native-build --offline` 替换依赖构建参数。依赖或原生源码发生变化时，应重新构建相应组件。
 
-本版本输出 `PG-Proxy-0.4.0-arm64-v8a-release.apk` 与 `pg-proxy-release-apks.json`。核对清单中的 `build_invoked`、`workspace_revision_at_packaging`、`workspace_dirty_at_packaging`、`native_source_sha256`、ABI、版本、APK SHA-256、证书指纹与调试状态；确认 `waa_source_provenance_verified`，同时核对 APK 内的版本控制信息。`--package-only` 仅检查和归档已有包，不能代替从最终提交重新编译。
+本版本输出 `PG-Proxy-0.5.0-arm64-v8a-release.apk` 与 `pg-proxy-release-apks.json`。核对清单中的 `build_invoked`、`workspace_revision_at_packaging`、`workspace_dirty_at_packaging`、`native_source_sha256`、ABI、版本、APK SHA-256、证书指纹与调试状态；确认 `waa_source_provenance_verified`，同时核对 APK 内的版本控制信息。`--package-only` 仅检查和归档已有包，不能代替从最终提交重新编译。
 
 以上流程便于复现构建步骤和追溯源码，不承诺字节级可复现。工具链、构建元数据和签名可能影响 APK 哈希；不同签名的自行构建包也不应与维护者附件直接比较整包哈希。
 

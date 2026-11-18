@@ -9,8 +9,9 @@ import math
 import re
 from datetime import datetime
 
-from .playground_protocol import duration_wire, encode_value, invalid
+from .playground_protocol import duration_wire, encode_value, invalid, valid_identifier
 from .errors import PlaygroundError
+from .model_catalog import THINKING_LEVEL_IDS, thinking_level_name
 
 
 def _fields(value, names, aliases=None):
@@ -334,7 +335,7 @@ def _tools(request, model, schema_budget):
                 entry = _fields(declaration, {'name', 'description', 'parameters', 'parametersJsonSchema'},
                                 {'parameters_json_schema': 'parametersJsonSchema'})
                 name = entry.get('name')
-                if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.:-]{0,63}', name) or name in names:
+                if not valid_identifier(name) or name in names:
                     continue
                 names.add(name)
                 if 'description' in entry and not isinstance(entry['description'], str):
@@ -498,9 +499,12 @@ def _config(value, model, schema_budget):
                     budget = max(budget, at(2, 0))
                 selected['thinkingBudget'] = budget
         level = thinking.get('thinkingLevel')
-        if isinstance(level, str):
-            level = level.upper()
-            if 52 in codes and {'LOW': 1, 'MEDIUM': 2, 'HIGH': 3, 'MINIMAL': 4}.get(level) in at(6, []):
+        levels = at(6, [])
+        if 52 in codes and isinstance(level, str) and isinstance(levels, list):
+            level = thinking_level_name(level)
+            if level == 'EXTRA_HIGH' and THINKING_LEVEL_IDS[level] not in levels:
+                level = 'HIGH'
+            if level in THINKING_LEVEL_IDS and THINKING_LEVEL_IDS[level] in levels:
                 selected['thinkingLevel'] = level
                 selected.pop('thinkingBudget', None)
         if selected:

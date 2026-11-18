@@ -17,10 +17,16 @@ from .errors import PlaygroundError
 ASPECT_RATIOS = {1:'1:1',2:'9:16',3:'16:9',4:'3:4',5:'4:3',6:'3:2',7:'2:3',
                  8:'5:4',9:'4:5',10:'21:9',11:'9:21',12:'1:4',13:'4:1',14:'1:8',15:'8:1'}
 IMAGE_SIZES = {1:'1K',2:'2K',3:'4K',4:'512'}
-THINKING_LEVELS = {1:'LOW',2:'MEDIUM',3:'HIGH',4:'MINIMAL'}
+THINKING_LEVELS = {1:'LOW',2:'MEDIUM',3:'HIGH',4:'MINIMAL',5:'EXTRA_HIGH'}
+THINKING_LEVEL_IDS = {name: code for code, name in THINKING_LEVELS.items()}
 TOOL_CAPABILITIES = {9:'code_execution',10:'function_calling',12:'google_search',
                      13:'url_context',54:'image_search',58:'google_maps'}
 TYPE_CAPABILITIES = {1:'chat',20:'video',21:'image',26:'live',37:'speech',53:'music',77:'transcription'}
+
+
+def thinking_level_name(value):
+    name = value.upper()
+    return 'EXTRA_HIGH' if name in ('XHIGH', 'MAX') else name
 
 
 def _documented(inputs, model, *, output=('text',), context=None, source=None):

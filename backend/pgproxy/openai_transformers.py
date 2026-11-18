@@ -9,9 +9,10 @@ import json
 import re
 import time
 import uuid
-from .playground_protocol import invalid
+from .playground_protocol import invalid, valid_identifier
 from .errors import PlaygroundError
-from .openai_compat import normalize_openai_request
+from .model_catalog import thinking_level_name
+from .openai_compat import REASONING_EFFORTS, normalize_openai_request
 
 
 def _object(value, allowed, label):
@@ -32,8 +33,8 @@ def _json_object(value, label):
     return result
 
 
-def _name(value, label='function name'):
-    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_.:-]{0,63}', value):
+def _name(value, label='function name', *, max_length=None):
+    if not valid_identifier(value) or (max_length is not None and len(value) > max_length):
         raise invalid('Invalid ' + label)
     return value
 
@@ -300,11 +301,11 @@ def openai_request_to_gemini(request):
             config[target] = copy.deepcopy(request[source])
     if 'reasoning_effort' in request:
         effort = request['reasoning_effort']
-        if not isinstance(effort, str) or effort not in ('none', 'minimal', 'low', 'medium', 'high'):
+        if not isinstance(effort, str) or effort not in REASONING_EFFORTS:
             raise invalid('Unsupported reasoning_effort')
         if 'thinking_config' in request:
             raise invalid('Use either reasoning_effort or thinking_config')
-        config['thinkingConfig'] = {'thinkingBudget': 0} if effort == 'none' else {'thinkingLevel': effort.upper()}
+        config['thinkingConfig'] = {'thinkingBudget': 0} if effort == 'none' else {'thinkingLevel': thinking_level_name(effort)}
     if 'modalities' in request:
         modalities = request['modalities']
         if (not isinstance(modalities, list) or not modalities or any(not isinstance(m, str) or m not in ('text', 'image', 'audio') for m in modalities)
@@ -320,7 +321,7 @@ def openai_request_to_gemini(request):
             config['responseMimeType'] = 'application/json' if kind == 'json_object' else 'text/plain'
         elif kind == 'json_schema':
             schema = _object(fmt.get('json_schema'), {'name', 'description', 'schema', 'strict'}, 'json_schema')
-            _name(schema.get('name'), 'schema name')
+            _name(schema.get('name'), 'schema name', max_length=64)
             if not isinstance(schema.get('schema'), dict) or ('description' in schema and not isinstance(schema['description'], str)):
                 raise invalid('json_schema requires an object schema')
             if schema.get('strict', False) is not False:
