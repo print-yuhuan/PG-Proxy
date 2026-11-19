@@ -301,16 +301,22 @@ async def test_model_only_on_cooling_account_is_distinguished_from_unknown_suppo
 
 
 @pytest.mark.asyncio
-async def test_403_is_validation_error_not_cookie_expiry_and_probe_recovers():
+@pytest.mark.parametrize('code', ['upstream_permission_denied', 'google_account_verification_required'])
+async def test_403_is_validation_error_not_cookie_expiry_and_probe_recovers(code):
     pool,_ = pool_fixture()
     account_id = await add(pool)
     client = pool.client(pool.record(account_id))
-    client.failure = PlaygroundError('Denied',403,'upstream_permission_denied')
+    client.failure = PlaygroundError('Denied',403,code)
     with pytest.raises(PlaygroundError): await consume(pool)
     assert pool.record(account_id)['status']=='validation_error'
+    assert pool.record(account_id)['lastError']==code
+    with pytest.raises(PlaygroundError) as unavailable:
+        await consume(pool)
+    assert unavailable.value.code == 'no_available_account'
     client.failure = None
     result = await pool.check(account_id)
     assert result['verified'] and pool.record(account_id)['status']=='verified'
+    assert pool.record(account_id)['lastError'] is None
     assert client.calls == ['test-chat','test-chat']
     await pool.close()
 

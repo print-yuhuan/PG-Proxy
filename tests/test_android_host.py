@@ -6,6 +6,9 @@ import pytest
 
 from pgproxy.android_host import Controller
 from pgproxy.config import VERSION, Settings
+from pgproxy.errors import PlaygroundError
+from pgproxy.playground_client import PlaygroundClient
+from conftest import GOOGLE_VERIFICATION_NOTICE
 from test_accounts import MemoryBridge, FakeClient, credentials
 
 
@@ -50,6 +53,48 @@ def test_controller_private_management_listener_restart_auth_and_shutdown():
     finally:
         controller.close()
     assert not controller.thread.is_alive()
+
+
+@pytest.mark.parametrize(('message', 'code'), [
+    ('private diagnostic text', 'upstream_permission_denied'),
+    (GOOGLE_VERIFICATION_NOTICE, 'google_account_verification_required'),
+])
+async def test_manual_credential_check_records_upstream_refusal_without_raw_response(message, code):
+    client = PlaygroundClient(Settings())
+    response = httpx.Response(403, request=httpx.Request('POST', 'https://example.invalid/GenerateContent'),
+                              json={'error': {'status': 'PERMISSION_DENIED', 'message': message}})
+    try:
+        with pytest.raises(PlaygroundError) as denied:
+            await client._check(response, 'GenerateContent')
+    finally:
+        await client.close()
+
+    controller = Controller(MemoryBridge(), FakeClient)
+    try:
+        imported = call(controller, 'import_account', session=credentials())
+        account_id = imported['result']['accountId']
+        fake = controller.pool.client(controller.pool.record(account_id))
+        fake.failure = denied.value
+
+        result = call(controller, 'check_account', id=account_id)
+        assert not result['ok']
+        assert result['error']['code'] == code
+        assert result['result']['accounts'][0]['status'] == 'validation_error'
+        assert result['result']['accounts'][0]['lastError'] == code
+        assert result['result']['accounts'][0]['modelCount'] == 1
+        log = result['result']['logs'][-1]
+        assert log['level'] == 'failure' and log['title'] == '凭证检查未通过' and log['credentialIssue']
+        detail = call(controller, 'log_detail', id=log['id'])['result']
+        assert detail['error'] == {'code': code, 'businessHttpStatus': 403,
+                                   'upstreamStatus': 403, 'upstreamOperation': 'GenerateContent'}
+        assert 'status' not in detail and message not in json.dumps(detail)
+
+        fake.failure = None
+        recovered = call(controller, 'check_account', id=account_id)
+        assert recovered['result']['accounts'][0]['status'] == 'verified'
+        assert fake.calls == ['test-chat', 'test-chat']
+    finally:
+        controller.close()
 
 
 @pytest.mark.parametrize('payload',[{'port':80},{'port':True},{'lan':'yes'},{'apiKey':'12'},

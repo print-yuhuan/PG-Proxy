@@ -45,6 +45,7 @@ data class UiActions(
     val onRefresh: () -> Unit = {}, val onToggleService: () -> Unit = {},
     val onAddAccount: (String) -> Unit = {}, val onLogin: (String, String) -> Unit = { _, _ -> },
     val onEnableAccount: (String, Boolean) -> Unit = { _, _ -> }, val onCheckAccount: (String) -> Unit = {},
+    val onOpenGoogleVerification: (String) -> Unit = {},
     val onDeleteAccount: (String) -> Unit = {}, val onDiscardLogin: (String) -> Unit = {},
     val onConfigure: (ServiceSettings) -> Unit = {}, val onCopy: (String) -> Unit = {},
     val onDiagnostics: () -> Unit = {}, val onCleanup: () -> Unit = {}, val onOpenLicenses: () -> Unit = {},

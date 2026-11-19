@@ -26,6 +26,7 @@ PUBLIC_MESSAGES = {
     'upstream_connection_error':'无法连接上游，请检查网络连接后重试。',
     'upstream_authentication_error':'上游未接受登录会话，请确认网站可用后重新登录。',
     'upstream_permission_denied':'上游拒绝访问，请检查账号权限及请求校验状态。',
+    'google_account_verification_required':'Google 要求验证该账号。请在 https://aistudio.google.com/verify-account 完成验证，再检查凭证。',
     'upstream_error':'上游请求未能完成，请稍后重试。',
     'page_initialization_failed':'Playground 页面初始化失败，请确认登录和网站状态。',
     'protocol_error':'上游响应格式不符合预期，本次请求未能完整处理。',

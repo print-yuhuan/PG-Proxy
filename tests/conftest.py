@@ -7,6 +7,13 @@ from pgproxy.session import GoogleSession
 from pgproxy.playground_client import PlaygroundClient
 
 
+GOOGLE_VERIFICATION_NOTICE = (
+    'Your account must be verified before it can continue using the Gemini API. '
+    'Verify your account at https://aistudio.google.com/verify-account.'
+)
+GOOGLE_VERIFICATION_DOCS_URL = 'https://ai.google.dev/gemini-api/docs/verification'
+
+
 def model_row(name='models/test-chat'):
     row = [None]*83
     for i,v in {0:name,3:'Test Chat',4:'Synthetic test catalog',5:1024,6:512,7:['generateContent'],8:1.0,9:0.95,10:64,27:2,64:[1,9,12,25,35,52],71:[128,1024,0,True,None,2,[1,2,3,4]]}.items():

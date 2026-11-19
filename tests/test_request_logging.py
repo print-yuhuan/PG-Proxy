@@ -15,7 +15,7 @@ from pgproxy.main import create_app
 from pgproxy.network_info import NetworkInfo, diagnose_failure
 from pgproxy.request_logging import (LogStore, RequestLoggingMiddleware, note_upstream,
     record_error, record_parameters, record_credential_issue, register_secrets, set_stage)
-from conftest import frame
+from conftest import GOOGLE_VERIFICATION_DOCS_URL, GOOGLE_VERIFICATION_NOTICE, frame
 
 
 def details(store):
@@ -167,6 +167,38 @@ def test_upstream_http_and_business_error_preserved_separately_with_secret_redac
     assert detail['error']['type'] == kind and 'Google original reason' in detail['error']['raw']
     assert 'cookie-private-value' not in exported(store) and 'proof-private-value' not in exported(store)
     assert 'private-prompt-DoNotExport' not in exported(store)
+
+
+@pytest.mark.parametrize(('sparse', 'anchor'), [
+    (True, ''), (True, '#verify-account'), (True, '#verify-account.'), (False, ''),
+])
+def test_google_account_verification_refusal_has_distinct_api_error_and_log(client_factory, sparse, anchor):
+    if sparse:
+        message = f'{GOOGLE_VERIFICATION_NOTICE} Learn more at {GOOGLE_VERIFICATION_DOCS_URL}{anchor}'
+        error = [7, message, [[
+            'type.googleapis.com/google.internal.alkali.applications.makersuite.v1.GeminiApiErrorDetails',
+            [None] * 40 + [[]],
+        ]]]
+        payload = '[,' + json.dumps(error, separators=(',', ':')) + ']'
+    else:
+        payload = json.dumps({'error': {'code': 403, 'status': 'PERMISSION_DENIED',
+                                       'message': GOOGLE_VERIFICATION_NOTICE}})
+    client, requests = client_factory(generate_status=403, generate_body=payload.encode())
+    store = LogStore()
+    with TestClient(create_app(client, request_logs=store)) as api:
+        response = api.post('/v1/chat/completions', headers=auth(client), json=body())
+    code = 'google_account_verification_required'
+    assert response.status_code == 403 and response.json()['error']['type'] == code
+    assert 'https://aistudio.google.com/verify-account' in response.json()['error']['message']
+    assert [request.url.path.rsplit('/', 1)[-1] for request in requests].count('GenerateContent') == 1
+    assert all(request.url.path != '/verify-account' for request in requests)
+    detail = request_detail(store)
+    assert detail['credentialIssue'] and detail['error']['code'] == code
+    assert detail['error']['type'] == 'credential_verification_required'
+    assert detail['error']['upstreamStatus'] == 403
+    issue = next(entry for entry in details(store) if entry['event'] == 'credential_issue')
+    assert issue['credential']['kind'] == 'credential_verification_required'
+    assert issue['requestId'] == detail['id'] and issue['error']['code'] == code
 
 
 @pytest.mark.parametrize('cookie_state', ['missing', 'expired', 'invalid'])

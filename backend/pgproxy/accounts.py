@@ -147,7 +147,8 @@ class AccountPool:
         record['lastError'] = error.code
         if error.code in ('session_required','session_invalid','upstream_authentication_error'):
             record['status'] = 'needs_login'
-        elif error.code in ('upstream_permission_denied','waa_execution_error','waa_unavailable','waa_protocol_error'):
+        elif error.code in ('upstream_permission_denied','google_account_verification_required',
+                            'waa_execution_error','waa_unavailable','waa_protocol_error'):
             record['status'] = 'validation_error'
         elif error.status == 429:
             record['status'] = 'cooldown'

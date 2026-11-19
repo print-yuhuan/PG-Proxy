@@ -222,6 +222,7 @@ private fun AccountCard(account: AccountUi, available: Boolean, actions: UiActio
         else -> "等待检查"
     }
     val attention = account.enabled && account.status in setOf("needs_login", "login_required", "validation_error", "error")
+    val needsVerification = account.lastError == "google_account_verification_required"
     val checkedAt = remember(account.lastChecked) {
         if (account.lastChecked.isFinite() && account.lastChecked > 0 && account.lastChecked <= 253402300799.0)
             SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date((account.lastChecked * 1000).toLong()))
@@ -229,7 +230,7 @@ private fun AccountCard(account: AccountUi, available: Boolean, actions: UiActio
     }
     val modelCount: @Composable () -> Unit = {
         AnimatedContent(targetState = account.modelCount, transitionSpec = { accountTextTransition() }, label = "account-model-count") { count ->
-            Text(if (count > 0) "$count 个可用模型" else "尚未读取模型",
+            Text(if (count > 0) "已读取 $count 个模型" else "尚未读取模型",
                 modifier = if (count == account.modelCount) Modifier else Modifier.clearAndSetSemantics { },
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -258,7 +259,7 @@ private fun AccountCard(account: AccountUi, available: Boolean, actions: UiActio
                 credentialSwitch()
             }
         }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             AnimatedContent(targetState = status to attention, transitionSpec = { accountTextTransition() }, label = "account-status") { (text, alert) ->
                 Surface(modifier = if (text == status && alert == attention) Modifier else Modifier.clearAndSetSemantics { }, shape = CircleShape,
                     color = if (alert) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer) {
@@ -266,37 +267,58 @@ private fun AccountCard(account: AccountUi, available: Boolean, actions: UiActio
                         color = if (alert) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer)
                 }
             }
-            AnimatedVisibility(visible = account.cooldownSeconds > 0, enter = accountHintEnter(), exit = accountHintExit()) {
-                Text("约 ${account.cooldownSeconds} 秒后重试", Modifier.padding(vertical = 5.dp),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             AnimatedContent(targetState = checkedAt, transitionSpec = { accountTextTransition() }, label = "account-checked-time") { time ->
-                Text("最近检查 · $time", modifier = if (time == checkedAt) Modifier else Modifier.clearAndSetSemantics { },
+                Text("最近检查 · $time", modifier = Modifier.padding(vertical = 4.dp)
+                    .then(if (time == checkedAt) Modifier else Modifier.clearAndSetSemantics { }),
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            AccountHint(if (account.lastModel.isNotBlank()) "最近使用 · ${account.lastModel}" else "", MaterialTheme.colorScheme.onSurfaceVariant)
-            AccountHint(if (account.lastError.isNotBlank()) accountErrorMessage(account.lastError) else "",
-                if (attention) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+            AnimatedVisibility(visible = account.cooldownSeconds > 0, enter = accountHintEnter(), exit = accountHintExit()) {
+                Text("约 ${account.cooldownSeconds} 秒后重试", Modifier.padding(vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
+        AccountHint(if (account.lastModel.isNotBlank()) "最近使用 · ${account.lastModel}" else "", MaterialTheme.colorScheme.onSurfaceVariant)
+        if (needsVerification) {
+            Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.primaryContainer) {
+                FlowRow(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(accountErrorMessage(account.lastError), Modifier.align(Alignment.CenterVertically),
+                        style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                        AccountAction("前往验证", Icons.Outlined.VerifiedUser, "account_verify_${account.id}", editable,
+                            modifier = Modifier.width(IntrinsicSize.Max), colors = ButtonDefaults.buttonColors()) {
+                            if (isCurrent()) actions.onOpenGoogleVerification(account.id)
+                        }
+                    }
+                }
+            }
+        }
+        AccountHint(if (!needsVerification && account.lastError.isNotBlank()) accountErrorMessage(account.lastError) else "",
+            if (attention) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            AccountAction("检查凭证", Icons.Outlined.VerifiedUser, "account_check_${account.id}", editable) { if (isCurrent()) actions.onCheckAccount(account.id) }
-            AccountAction("重新登录", Icons.AutoMirrored.Outlined.Login, "account_relogin_${account.id}", editable) { if (isCurrent()) actions.onLogin(account.id, account.label) }
-            AccountAction("删除", Icons.Outlined.DeleteOutline, "account_delete_${account.id}", editable, destructive = true) { if (isCurrent()) onDelete() }
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val stackCheck = maxWidth < 280.dp || LocalDensity.current.fontScale > 1.3f
+            FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                AccountAction("检查凭证", Icons.Outlined.VerifiedUser, "account_check_${account.id}", editable,
+                    modifier = if (stackCheck) Modifier.fillMaxWidth() else Modifier) { if (isCurrent()) actions.onCheckAccount(account.id) }
+                AccountAction("重新登录", Icons.AutoMirrored.Outlined.Login, "account_relogin_${account.id}", editable) {
+                    if (isCurrent()) actions.onLogin(account.id, account.label)
+                }
+                AccountAction("删除凭证", Icons.Outlined.DeleteOutline, "account_delete_${account.id}", editable,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)) { if (isCurrent()) onDelete() }
+            }
         }
     }
 }
 
 @Composable
 private fun AccountAction(label: String, icon: ImageVector, tag: String, enabled: Boolean,
-                          destructive: Boolean = false, onClick: () -> Unit) {
+                          modifier: Modifier = Modifier, colors: ButtonColors = ButtonDefaults.textButtonColors(), onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     TextButton(onClick = onClick, enabled = enabled, interactionSource = interaction,
-        modifier = Modifier.pressFeedback(interaction, enabled).testTag(tag),
-        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-        colors = ButtonDefaults.textButtonColors(contentColor = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)) {
+        modifier = modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).pressFeedback(interaction, enabled).testTag(tag),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), colors = colors) {
         Icon(icon, null, Modifier.size(17.dp))
         Spacer(Modifier.width(6.dp))
         Text(label, fontWeight = FontWeight.Medium)
@@ -328,6 +350,7 @@ private fun AccountHint(text: String, color: Color) {
 
 private fun accountErrorMessage(code: String): String = when (code) {
     "session_required", "session_invalid", "upstream_authentication_error" -> "登录凭证已失效，请重新登录。"
+    "google_account_verification_required" -> "需要完成 Google 账号验证"
     "upstream_permission_denied" -> "当前凭证暂时无法访问，请检查 AI Studio 使用权限。"
     "waa_execution_error", "waa_unavailable", "waa_protocol_error" -> "校验未完成，请稍后再次检查。"
     "rate_limit" -> "请求暂时受限，请等待冷却后重试。"

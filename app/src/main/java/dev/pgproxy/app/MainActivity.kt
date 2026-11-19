@@ -299,9 +299,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun openLogin(id: String = UUID.randomUUID().toString().replace("-", ""), label: String) {
+    private fun openAccountBrowser(id: String = UUID.randomUUID().toString().replace("-", ""), label: String,
+                                   verifyAccount: Boolean = false) {
         login.launch(Intent(this, GeckoLoginActivity::class.java)
             .putExtra(GeckoLoginActivity.EXTRA_ACCOUNT_ID, id).putExtra(GeckoLoginActivity.EXTRA_LABEL, label)
+            .putExtra(GeckoLoginActivity.EXTRA_VERIFY_ACCOUNT, verifyAccount)
             .putExtra(GeckoLoginActivity.EXTRA_EXISTING_ACCOUNT, accountList().any { it.optString("id") == id }))
     }
 
@@ -310,7 +312,7 @@ class MainActivity : ComponentActivity() {
         notice = "已复制"
     }
 
-    private fun openProjectPage(url: String, label: String) {
+    private fun openWebPage(url: String, label: String) {
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
             .addCategory(Intent.CATEGORY_BROWSABLE)
         if (!openExternal(intent)) {
@@ -376,9 +378,15 @@ class MainActivity : ComponentActivity() {
             if (!running && Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             action(if (running) "stop" else "start")
         },
-        onAddAccount = { openLogin(label = it) }, onLogin = { id, label -> openLogin(id, label) },
+        onAddAccount = { openAccountBrowser(label = it) }, onLogin = { id, label -> openAccountBrowser(id, label) },
         onEnableAccount = { id, enabled -> action("set_enabled", JSONObject().put("id", id).put("enabled", enabled)) },
         onCheckAccount = { action("check_account", JSONObject().put("id", it)) },
+        onOpenGoogleVerification = { id ->
+            accountList().firstOrNull { it.optString("id") == id && it.optString("status") != "deleting" &&
+                it.optString("lastError") == "google_account_verification_required" }?.let {
+                openAccountBrowser(id, it.optString("label"), verifyAccount = true)
+            }
+        },
         onDeleteAccount = { deleteCredential(it, unfinished = false) },
         onDiscardLogin = { deleteCredential(it, unfinished = true) },
         onConfigure = { config -> action("configure", JSONObject().put("port", config.port).put("lan", config.lan)
@@ -406,8 +414,8 @@ class MainActivity : ComponentActivity() {
         } } },
         onCleanup = { cleanProfiles() },
         onOpenLicenses = { startActivity(Intent(this, LicensesActivity::class.java)) },
-        onOpenRepository = { openProjectPage(ProjectLinks.REPOSITORY, "仓库") },
-        onOpenIssues = { openProjectPage(ProjectLinks.ISSUES, "问题反馈") },
+        onOpenRepository = { openWebPage(ProjectLinks.REPOSITORY, "仓库") },
+        onOpenIssues = { openWebPage(ProjectLinks.ISSUES, "问题反馈") },
         onOpenQqGroup = ::openQqGroup,
         onOpenNotificationSettings = { openBackgroundSettings(BackgroundDestination.NOTIFICATIONS) },
         onOpenBatterySettings = { openBackgroundSettings(BackgroundDestination.BATTERY) },

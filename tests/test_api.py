@@ -10,7 +10,7 @@ from pgproxy.main import create_app
 from pgproxy.cooldown import MAX_RETRY_SECONDS, retry_deadline
 from pgproxy.errors import PlaygroundError
 from pgproxy.responses import generation_response
-from conftest import frame
+from conftest import GOOGLE_VERIFICATION_DOCS_URL, GOOGLE_VERIFICATION_NOTICE, frame
 
 
 def auth(client):
@@ -99,6 +99,59 @@ def test_initial_upstream_errors_keep_http_status(client_factory,status):
         if status==429:
             assert r.headers['retry-after']=='25'
             assert c.cooldown_until>0
+
+
+@pytest.mark.parametrize(('method', 'http_status', 'body', 'expected'), [
+    ('CountTokens', 403, {'error': {'status': 'PERMISSION_DENIED', 'message': GOOGLE_VERIFICATION_NOTICE}},
+     'upstream_permission_denied'),
+    ('GenerateContent', 400, {'error': {'status': 'PERMISSION_DENIED', 'message': GOOGLE_VERIFICATION_NOTICE}},
+     'upstream_error'),
+    ('GenerateContent', 403, [None, [16, GOOGLE_VERIFICATION_NOTICE]], 'upstream_permission_denied'),
+    ('GenerateContent', 403, {'error': {'status': 'UNAUTHENTICATED', 'code': 403,
+     'message': GOOGLE_VERIFICATION_NOTICE}}, 'upstream_permission_denied'),
+    ('GenerateContent', 403, {'error': {'status': 'PERMISSION_DENIED', 'code': 401,
+     'message': GOOGLE_VERIFICATION_NOTICE}}, 'upstream_permission_denied'),
+    ('GenerateContent', 403, {'error': {'details': [{'message': GOOGLE_VERIFICATION_NOTICE}],
+     'status': 'PERMISSION_DENIED', 'message': 'Forbidden'}}, 'upstream_permission_denied'),
+    ('GenerateContent', 403, {'error': {'code': 403,
+     'message': GOOGLE_VERIFICATION_NOTICE.replace('Your account', 'Your project')}}, 'upstream_permission_denied'),
+    ('GenerateContent', 403, {'error': {'code': 403,
+     'message': GOOGLE_VERIFICATION_NOTICE.replace('aistudio.google.com/', 'aistudio.google.com.example/')}}, 'upstream_permission_denied'),
+    ('GenerateContent', 403, {'error': {'code': 403,
+     'message': GOOGLE_VERIFICATION_NOTICE.replace('verify-account', 'other-path')}}, 'upstream_permission_denied'),
+    ('GenerateContent', 403, [None, [7, GOOGLE_VERIFICATION_NOTICE + ' Unrelated detail.']],
+     'upstream_permission_denied'),
+])
+async def test_google_account_verification_does_not_relabel_other_failures(client_factory, method, http_status, body, expected):
+    client, _ = client_factory()
+    response = httpx.Response(http_status, json=body, request=httpx.Request('POST', f'https://example.invalid/{method}'))
+    try:
+        with pytest.raises(PlaygroundError) as captured:
+            await client._check(response, method)
+        assert captured.value.code == expected and captured.value.status == http_status
+    finally:
+        await client.close()
+
+
+@pytest.mark.parametrize('docs_url', [
+    GOOGLE_VERIFICATION_DOCS_URL + '#',
+    GOOGLE_VERIFICATION_DOCS_URL + '#verify-account/extra',
+    GOOGLE_VERIFICATION_DOCS_URL + '#verify-account Unrelated detail.',
+    GOOGLE_VERIFICATION_DOCS_URL + '#verify-account. Unrelated detail.',
+    GOOGLE_VERIFICATION_DOCS_URL + '#verify-account..',
+    GOOGLE_VERIFICATION_DOCS_URL + '?source=other#verify-account',
+    GOOGLE_VERIFICATION_DOCS_URL.replace('ai.google.dev/', 'ai.google.dev.example/') + '#verify-account',
+    GOOGLE_VERIFICATION_DOCS_URL + '-extra#verify-account',
+])
+def test_google_account_verification_rejects_nonmatching_sparse_documentation_url(client_factory, docs_url):
+    message = f'{GOOGLE_VERIFICATION_NOTICE} Learn more at {docs_url}'
+    payload = '[,' + json.dumps([7, message, []]) + ']'
+    client, _ = client_factory(generate_status=403, generate_body=payload.encode())
+    with TestClient(create_app(client)) as api:
+        response = api.post('/v1/chat/completions', headers=auth(client), json={
+            'model':'test-chat', 'messages':[{'role':'user', 'content':'hello'}]})
+    assert response.status_code == 403
+    assert response.json()['error']['type'] == 'upstream_permission_denied'
 
 
 @pytest.mark.parametrize(('value', 'delay'), [

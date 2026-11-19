@@ -103,6 +103,7 @@ fun parseLogDetail(value: JSONObject): LogDetailUi {
             field("失败类型", error.opt("typeLabel") ?: error.opt("type")), field("类型代码", error.opt("type"), true),
             field("业务错误码", error.opt("code"), true), field("错误记录 HTTP 状态码", error.opt("httpStatus"), true),
             field("业务错误 HTTP 状态码", error.opt("businessHttpStatus"), true),
+            field("上游操作", error.opt("upstreamOperation"), true),
             field("上游 HTTP 状态码", error.opt("upstreamStatus"), true), field("上游业务错误码", error.opt("upstreamCode"), true),
             field("错误说明", error.opt("message")),
             field("原始错误（已脱敏）", error.opt("raw"), true, 12_000),

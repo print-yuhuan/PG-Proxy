@@ -154,7 +154,10 @@ class Controller:
                     raise PlaygroundError('Unknown internal operation',400,'invalid_request')
                 return {'ok':True,'result':{**self.snapshot(),**extra}}
         except PlaygroundError as error:
-            self._log(error.code)
+            if action == 'check_account':
+                self.logs.event(error.code, 'failure', title='凭证检查未通过', error=error)
+            else:
+                self._log(error.code)
             return {'ok':False,'error':{'status':error.status,'code':error.code,'message':error.public_message},'result':self.snapshot()}
         except (ValueError,TypeError,KeyError):
             return {'ok':False,'error':{'status':400,'code':'invalid_request','message':'操作参数格式不正确。'},'result':self.snapshot()}

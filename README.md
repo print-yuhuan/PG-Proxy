@@ -8,7 +8,7 @@
 <p align="center">在 Android 上登录、管理凭证，让熟悉的客户端连接 Google AI Studio Playground。</p>
 
 <p align="center">
-  <strong>v0.5.0</strong> · Android 9+ · ARM64 · <a href="LICENSE">MIT License</a>
+  <strong>v0.5.1</strong> · Android 9+ · ARM64 · <a href="LICENSE">MIT License</a>
 </p>
 
 <p align="center">
@@ -39,9 +39,9 @@
 
 前往 **[GitHub Releases](https://github.com/print-yuhuan/PG-Proxy/releases/latest)** 下载正式签名的 ARM64 APK，并查看对应版本的更新说明、文件校验值和已知限制。
 
-最低支持 **Android 9（API 28）**。源码可构建 `arm64-v8a` 与 `x86_64`，后者主要用于模拟器；当前不支持 32 位设备。想审阅实现或自行打包，可按[构建与维护文档](docs/MAINTENANCE.md)操作。当前源码版本为 **0.5.0**，版本码为 **50**。
+最低支持 **Android 9（API 28）**。源码可构建 `arm64-v8a` 与 `x86_64`，后者主要用于模拟器；当前不支持 32 位设备。想审阅实现或自行打包，可按[构建与维护文档](docs/MAINTENANCE.md)操作。当前源码版本为 **0.5.1**，版本码为 **51**。
 
-**0.5.0 更换了正式签名，无法直接覆盖 0.4.0 及更早的正式包。** 如需升级，请先记录必要设置，再卸载旧包、安装 0.5.0 并重新登录。卸载会删除旧包的本地配置、凭证和 Gecko 会话。[安装与签名说明](docs/MAINTENANCE.md#安装与后续更新)
+**从 0.5.0 正式包升级到使用同一正式签名的 0.5.1 时，可以直接覆盖安装，保留原有凭证、设置和浏览器会话。** 0.4.0 及更早的正式包使用旧签名。如需从这些版本升级，请先记录必要设置，卸载旧包后安装新版并重新登录。卸载会删除旧包的私有数据。[安装与签名说明](docs/MAINTENANCE.md#安装与后续更新)
 
 **0.5.0 更新重点**包括流尾错误识别、SSE 保活、凭证冷却、长工具名和 Extra High 思考档位。生成与真实计数共用工具名映射，流式和非流式响应均保留客户端提供的工具名称。详情见[更新说明](docs/releases/0.5.0.md)。
 

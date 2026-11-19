@@ -15,12 +15,13 @@ object GeckoProfiles {
     fun validAccountId(id: String): Boolean = id.matches(Regex("[a-f0-9]{32}"))
 
     private fun root(context: Context) = File(context.noBackupFilesDir, "gecko-accounts").apply { mkdirs() }
-    private fun account(context: Context, id: String): File {
+    private fun account(context: Context, id: String, create: Boolean = true): File {
         require(validAccountId(id))
         val base = root(context).canonicalFile
         val folder = File(base, id).canonicalFile
-        require(folder.parentFile == base)
-        return folder.apply { mkdirs() }
+        require(folder.parentFile == base && folder.name == id)
+        if (create) folder.mkdirs()
+        return folder
     }
     private fun marker(context: Context, id: String, name: String) = AtomicFile(File(account(context, id), name))
     private fun exists(context: Context, id: String, name: String): Boolean {
@@ -130,17 +131,23 @@ object GeckoProfiles {
     class Lease internal constructor(val profile: File, private val file: RandomAccessFile, private val lock: FileLock) : Closeable {
         @Synchronized override fun close() { try { if (lock.isValid) lock.release() } finally { file.close() } }
     }
-    fun acquire(context: Context, id: String, label: String? = null): Lease {
-        check(!isDeleted(context, id)) { "Deleted account profile" }
-        val folder = account(context, id)
+    class MissingProfileException : IllegalStateException("Registered browser profile unavailable")
+
+    fun acquire(context: Context, id: String, label: String? = null, requireExisting: Boolean = false): Lease {
+        val folder = account(context, id, create = !requireExisting)
+        if (requireExisting && !folder.isDirectory) throw MissingProfileException()
         val file = RandomAccessFile(File(folder, "active.lock"), "rw")
         try {
             val lock = file.channel.tryLock() ?: error("Profile already in use")
-            if (isDeleted(context, id)) { lock.release(); error("Deleted account profile") }
-            val profile = File(folder, "profile").apply { mkdirs() }
-            if (label != null && !saveLoginMetadata(context, id, label)) {
-                lock.release()
-                error("Cannot persist browser login metadata")
+            val profile = File(folder, "profile")
+            if (requireExisting) {
+                if (!isImported(context, id) || !profile.isDirectory || Files.isSymbolicLink(profile.toPath())) {
+                    throw MissingProfileException()
+                }
+            } else {
+                check(!isDeleted(context, id)) { "Deleted account profile" }
+                check(profile.isDirectory || profile.mkdirs()) { "Cannot create browser profile" }
+                if (label != null) check(saveLoginMetadata(context, id, label)) { "Cannot persist browser login metadata" }
             }
             return Lease(profile, file, lock)
         } catch (error: Exception) { file.close(); throw error }

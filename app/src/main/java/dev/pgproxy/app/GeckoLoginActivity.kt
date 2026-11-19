@@ -3,14 +3,17 @@ package dev.pgproxy.app
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Application
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.WindowInsets
-import android.widget.FrameLayout
+import android.view.MenuItem
+import android.widget.LinearLayout
 import android.widget.Toast
+import android.widget.Toolbar
 import org.json.JSONObject
 import org.mozilla.geckoview.AllowOrDeny
 import org.mozilla.geckoview.GeckoResult
@@ -26,9 +29,11 @@ import org.mozilla.geckoview.WebRequestError
 class GeckoLoginActivity : Activity() {
     companion object {
         const val HOME = "https://aistudio.google.com/prompts/new_chat"
+        private const val VERIFICATION_URL = "https://aistudio.google.com/verify-account"
         const val EXTRA_ACCOUNT_ID = "accountId"
         const val EXTRA_LABEL = "label"
         const val EXTRA_EXISTING_ACCOUNT = "existingAccount"
+        const val EXTRA_VERIFY_ACCOUNT = "verifyAccount"
         private const val EXTENSION = "session-bridge@pgproxy.local"
         private const val RECOVERY_TIMEOUT_MS = 30_000L
         private var runtimeCreated = false
@@ -43,6 +48,8 @@ class GeckoLoginActivity : Activity() {
     private var lease: GeckoProfiles.Lease? = null
     private var accountId = ""
     private var label = ""
+    private var verifying = false
+    private var verificationBar: Toolbar? = null
     private var page = ""
     private var epoch = 0
     private var loaded = false
@@ -58,6 +65,7 @@ class GeckoLoginActivity : Activity() {
     private var ownsRuntime = false
     private var extension: WebExtension? = null
     private var errorDialog: AlertDialog? = null
+    private var handoffDialog: AlertDialog? = null
     private val recovery = LoginRecoveryPolicy()
     private var recoveryNavigationIssued = false
     private var recoveryPageStarted = false
@@ -81,12 +89,14 @@ class GeckoLoginActivity : Activity() {
         super.onCreate(state)
         accountId = intent.getStringExtra(EXTRA_ACCOUNT_ID).orEmpty()
         label = intent.getStringExtra(EXTRA_LABEL).orEmpty().take(80).ifBlank { "Google 凭证" }
+        verifying = intent.getBooleanExtra(EXTRA_VERIFY_ACCOUNT, false)
         if (!GeckoProfiles.validAccountId(accountId) || application !is BrowserLoginHost ||
             Application.getProcessName() != "$packageName:login" || runtimeCreated) {
             super.finish()
             return
         }
-        val root = FrameLayout(this).apply {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xfff6f8fc.toInt())
             setOnApplyWindowInsetsListener { v, insets ->
                 if (android.os.Build.VERSION.SDK_INT >= 30) {
@@ -103,22 +113,37 @@ class GeckoLoginActivity : Activity() {
         setContentView(root)
         stage("opening")
         try {
-            if (intent.getBooleanExtra(EXTRA_EXISTING_ACCOUNT, false) && !GeckoProfiles.confirmImport(this, accountId)) {
+            if (!verifying && intent.getBooleanExtra(EXTRA_EXISTING_ACCOUNT, false) && !GeckoProfiles.confirmImport(this, accountId)) {
                 fail("登录会话不可用", "该凭证已标记删除或无法保存会话状态，请返回凭证页检查。")
                 return
             }
-            lease = GeckoProfiles.acquire(this, accountId, label)
+            lease = if (verifying) GeckoProfiles.acquire(this, accountId, requireExisting = true)
+                else GeckoProfiles.acquire(this, accountId, label)
             ownsRuntime = true
             runtimeCreated = true
             runtime = GeckoRuntime.create(applicationContext, GeckoRuntimeSettings.Builder()
                 .arguments(arrayOf("-profile", lease!!.profile.absolutePath))
                 .configFilePath("").consoleOutput(false).remoteDebuggingEnabled(false).build())
             runtime!!.setDelegate { runtimeExited = true; stopLoginProcess() }
+            if (verifying) {
+                recovery.disable()
+                verificationBar = Toolbar(this).apply {
+                    title = "Google 账号验证"
+                    subtitle = label
+                    menu.add("返回凭证").setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
+                    setOnMenuItemClickListener { finish(); true }
+                }.also { root.addView(it, LinearLayout.LayoutParams(-1, -2)) }
+            }
             view = GeckoView(this)
-            root.addView(view, FrameLayout.LayoutParams(-1, -1))
+            root.addView(view, LinearLayout.LayoutParams(-1, 0, 1f))
             session = newSession()
             session!!.open(runtime!!)
             view!!.setSession(session!!)
+            main.post(deletionWatch)
+            if (verifying) {
+                session!!.loadUri(VERIFICATION_URL)
+                return
+            }
             runtime!!.webExtensionController.ensureBuiltIn("resource://android/assets/gecko-bridge/", EXTENSION)
                 .accept({ installed ->
                     if (closing || isFinishing || isDestroyed) return@accept
@@ -151,7 +176,8 @@ class GeckoLoginActivity : Activity() {
                     stage("bridge_ready")
                     session!!.loadUri(HOME)
                 }, { fail("浏览器初始化失败", "请返回后重新打开 Firefox 登录页。") })
-            main.post(deletionWatch)
+        } catch (_: GeckoProfiles.MissingProfileException) {
+            fail("浏览器登录状态不可用", "请返回凭证页，点这份凭证的「重新登录」，再打开验证页。")
         } catch (_: Exception) {
             fail("登录页暂时无法打开", "该账号可能正在另一个登录页面使用，请关闭后重试。")
         }
@@ -166,6 +192,7 @@ class GeckoLoginActivity : Activity() {
                 page = url.orEmpty()
                 recovery.observeNavigation(url)
                 val uri = Uri.parse(page)
+                if (verifying && allowed(page)) verificationBar?.subtitle = uri.host
                 if (uri.host == "accounts.google.com" &&
                     (uri.path.orEmpty().contains("rejected", true) || uri.getQueryParameter("error") == "disallowed_useragent")) {
                     stage("google_rejected")
@@ -175,6 +202,7 @@ class GeckoLoginActivity : Activity() {
             override fun onCanGoBack(s: GeckoSession, value: Boolean) { if (acceptsPageEvents(s)) canGoBack = value }
             override fun onLoadRequest(s: GeckoSession, request: GeckoSession.NavigationDelegate.LoadRequest): GeckoResult<AllowOrDeny> {
                 if (importing || imported || closing || isFinishing || isDestroyed) return GeckoResult.fromValue(AllowOrDeny.DENY)
+                if (handleVerificationLink(s, request.uri, request.hasUserGesture)) return GeckoResult.fromValue(AllowOrDeny.DENY)
                 val permitted = allowed(request.uri)
                 if (!permitted) recordDenied(request.uri)
                 else if (acceptsPageEvents(s)) recovery.observeNavigation(request.uri)
@@ -199,6 +227,7 @@ class GeckoLoginActivity : Activity() {
             }
             override fun onNewSession(old: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
                 if (!acceptsPageEvents(old)) return null
+                if (handleVerificationLink(old, uri, hasUserGesture = false)) return null
                 if (!allowed(uri)) { recordDenied(uri); return null }
                 recovery.observeNavigation(uri)
                 val popup = newSession()
@@ -221,7 +250,12 @@ class GeckoLoginActivity : Activity() {
                     if (recovery.isRecovering && !recoveryPageStarted) return
                     loaded = success
                     if (success) finishRecovery()
-                    if (!errorShown) stage(if (!success) "page_error" else if (Uri.parse(page).host == "aistudio.google.com") "waiting_for_prompt" else "waiting_for_google_login")
+                    if (!errorShown) stage(when {
+                        !success -> "page_error"
+                        Uri.parse(page).host != "aistudio.google.com" -> "waiting_for_google_login"
+                        verifying -> "viewing_verification"
+                        else -> "waiting_for_prompt"
+                    })
                 }
             }
             override fun onSecurityChange(s: GeckoSession, info: GeckoSession.ProgressDelegate.SecurityInformation) {
@@ -237,6 +271,32 @@ class GeckoLoginActivity : Activity() {
         !importing && !imported && !closing && !isFinishing && !isDestroyed
 
     private fun allowed(url: String): Boolean = LoginNavigationPolicy.allows(url)
+
+    private fun handleVerificationLink(source: GeckoSession, url: String, hasUserGesture: Boolean): Boolean {
+        if (!verifying || !active || !acceptsPageEvents(source) || !secure || secureHost != "aistudio.google.com" ||
+            page.substringBefore('?').substringBefore('#').trimEnd('/') != VERIFICATION_URL) return false
+        val handoff = VerificationLink.playServicesIntent(url) ?: return false
+        if (handoffDialog?.isShowing == true) return true
+        fun openPlayServices() {
+            if (!active || !acceptsPageEvents(source) || GeckoProfiles.isDeleted(this, accountId)) return
+            try {
+                startActivity(handoff)
+                stage("verification_opened_play_services")
+            } catch (_: ActivityNotFoundException) {
+                fail("设备无法打开 Google 验证", "请在常用手机上使用同一 Google 账号打开 AI Studio 官方验证页。")
+            } catch (_: SecurityException) {
+                fail("系统未允许打开 Google 验证", "请在常用手机上使用同一 Google 账号打开 AI Studio 官方验证页。")
+            }
+        }
+        if (hasUserGesture) openPlayServices() else {
+            // Some iframe and popup handoffs arrive without Gecko's user-gesture flag.
+            handoffDialog = AlertDialog.Builder(this).setTitle("打开 Google Play 服务？")
+                .setMessage("继续在这台设备上完成 Google 官方账号验证。")
+                .setPositiveButton("继续验证") { _, _ -> openPlayServices() }
+                .setNegativeButton("取消", null).setOnDismissListener { handoffDialog = null }.show()
+        }
+        return true
+    }
 
     private fun recordDenied(url: String) {
         val uri = Uri.parse(url)
@@ -312,6 +372,14 @@ class GeckoLoginActivity : Activity() {
         loaded = false; secure = false; epoch++
         stage(if (recoveryFailed) "playground_recovery_failed" else "page_load_error")
         val retry = uri?.takeIf(::allowed)
+        if (verifying) {
+            errorDialog = AlertDialog.Builder(this).setTitle("验证页暂时无法打开")
+                .setMessage(message)
+                .setPositiveButton("重试") { _, _ -> errorShown = false; session?.loadUri(retry ?: VERIFICATION_URL) }
+                .setNegativeButton("返回凭证") { _, _ -> finish() }
+                .setOnCancelListener { finish() }.show()
+            return
+        }
         val explanation = if (recoveryFailed) "已自动尝试打开 Playground，仍未能继续登录。\n" else ""
         errorDialog = AlertDialog.Builder(this).setTitle(if (recoveryFailed) "暂时无法恢复登录" else "页面暂时无法打开")
             .setMessage(explanation + message + "\n浏览器会话已保留，可以重试或返回凭证页继续登录。")
@@ -328,7 +396,7 @@ class GeckoLoginActivity : Activity() {
     }
 
     private fun eligible(): Boolean {
-        if (closing || errorShown || !active || !loaded || !secure || importing || imported || GeckoProfiles.isDeleted(this, accountId)) return false
+        if (verifying || closing || errorShown || !active || !loaded || !secure || importing || imported || GeckoProfiles.isDeleted(this, accountId)) return false
         val uri = Uri.parse(page)
         return uri.scheme == "https" && uri.host == "aistudio.google.com" && secureHost == "aistudio.google.com" &&
             uri.path.orEmpty().startsWith("/prompts/") && uri.getQueryParameter("authuser").let { it == null || it == "0" }
@@ -395,6 +463,7 @@ class GeckoLoginActivity : Activity() {
         recovery.disable()
         runCatching { errorDialog?.dismiss() }
         errorDialog = null
+        handoffDialog?.dismiss()
         runCatching { extension?.setMessageDelegate(null, "pgproxy_bridge") }
         extension = null
         runCatching { view?.releaseSession() }

@@ -38,6 +38,7 @@ _PRIVATE_CONTENT_KEY = re.compile(
 _TYPE_LABELS = {
     'authentication': '接口鉴权失败', 'credential_missing': '凭证缺失或不可用',
     'credential_expired': '凭证缺失或已过期', 'credential_invalid': '凭证校验失败',
+    'credential_verification_required': 'Google 账号待验证',
     'permission': '上游拒绝访问', 'timeout': '请求超时', 'connection': '连接异常',
     'parameters': '参数错误', 'not_found': '接口或模型不存在',
     'rate_limit': '上游限流', 'queue_timeout': '排队超时',
@@ -103,18 +104,29 @@ class LogStore:
         with self._lock:
             return copy.deepcopy(self._entries.get(identifier))
 
-    def event(self, code, level=None, **fields):
+    def event(self, code, level=None, *, error=None, **fields):
         """Management events contain application-owned labels, never raw payloads."""
         try:
             entry = {'id': uuid.uuid4().hex, 'at': time.time(), 'event': _plain(code, 96),
                      'credentialIssue': code in ('session_required', 'session_invalid',
                          'session_storage_error', 'no_available_account', 'upstream_authentication_error',
-                         'upstream_permission_denied', 'invalid_session_import')}
+                         'upstream_permission_denied', 'google_account_verification_required', 'invalid_session_import')}
             if level in _LEVELS:
                 entry['level'] = level
             for key in ('title', 'summary'):
                 if isinstance(fields.get(key), str):
                     entry[key] = _plain(fields[key], 256)
+            if error is not None:
+                # Private management operations have no HTTP trace or raw payload in the log.
+                entry['errorCode'] = entry['event']
+                detail = {'code': entry['event'], 'businessHttpStatus': error.status}
+                upstream_status = getattr(error, 'diagnostic_status', None)
+                if type(upstream_status) is int:
+                    detail['upstreamStatus'] = upstream_status
+                operation = getattr(error, 'diagnostic_upstream_operation', None)
+                if isinstance(operation, str):
+                    detail['upstreamOperation'] = _plain(operation, 96)
+                entry['error'] = detail
             self._put(entry)
         except Exception:
             # Diagnostics must not turn an otherwise successful operation into a failure.
@@ -390,6 +402,8 @@ def _failure_type(code, status=None, upstream_status=None):
         return 'credential_expired'
     if code in ('session_invalid', 'upstream_authentication_error', 'invalid_session_import'):
         return 'credential_invalid'
+    if code == 'google_account_verification_required':
+        return 'credential_verification_required'
     if code == 'account_busy':
         return 'queue_timeout'
     if code == 'upstream_permission_denied':
@@ -536,6 +550,7 @@ def record_credential_issue(error, account_id=None):
             code = 'authentication_error'
         if code not in ('session_required', 'session_invalid', 'upstream_authentication_error',
                         'invalid_session_import', 'no_available_account', 'upstream_permission_denied',
+                        'google_account_verification_required',
                         'authentication_error'):
             return
         status = getattr(error, 'status', getattr(error, 'status_code', 503))

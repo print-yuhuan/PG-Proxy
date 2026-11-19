@@ -121,6 +121,7 @@ private val logDescriptions = mapOf(
     "upstream_connection_error" to error("上游连接失败", "网络请求未能完成。"),
     "upstream_timeout" to error("上游响应超时", "请求超过了配置的等待时间。"),
     "upstream_permission_denied" to error("上游未接受请求", "凭证权限或请求校验未通过。"),
+    "google_account_verification_required" to warning("需要完成 Google 账号验证", "请在凭证页点「前往验证」，完成后再检查凭证。"),
     "upstream_error" to error("上游请求异常", "请求未能正常完成。"),
     "page_initialization_failed" to error("页面初始化失败", "无法取得本次请求所需的页面信息。"),
     "protocol_error" to error("响应解析失败", "上游数据未能按预期解析。"),

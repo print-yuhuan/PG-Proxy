@@ -17,6 +17,65 @@ class GeckoProfilesTest {
     private fun id() = UUID.randomUUID().toString().replace("-", "")
 
     @Test
+    fun verificationReusesOnlyTheSelectedRegisteredProfile() {
+        val first = id()
+        val second = id()
+        try {
+            for (accountId in listOf(first, second)) {
+                GeckoProfiles.acquire(context, accountId, "原名称").use {
+                    File(it.profile, "synthetic-session").writeText(accountId)
+                }
+                assertTrue(GeckoProfiles.confirmImport(context, accountId))
+            }
+            GeckoProfiles.acquire(context, second, "不应写入", requireExisting = true).use {
+                assertEquals(second, it.profile.parentFile!!.name)
+                assertEquals(second, File(it.profile, "synthetic-session").readText())
+                assertEquals("原名称", JSONObject(File(it.profile.parentFile, "login.json").readText()).getString("label"))
+                val busy = runCatching { GeckoProfiles.acquire(context, second, requireExisting = true).close() }.exceptionOrNull()
+                assertNotNull(busy)
+                assertFalse(busy is GeckoProfiles.MissingProfileException)
+            }
+            assertTrue(GeckoProfiles.markForDeletion(context, second))
+            assertThrows(GeckoProfiles.MissingProfileException::class.java) {
+                GeckoProfiles.acquire(context, second, requireExisting = true).close()
+            }
+            assertTrue(GeckoProfiles.isDeleted(context, second))
+            assertFalse(GeckoProfiles.isImported(context, second))
+            GeckoProfiles.acquire(context, first, requireExisting = true).use {
+                assertEquals(first, File(it.profile, "synthetic-session").readText())
+            }
+        } finally {
+            GeckoProfiles.delete(context, first)
+            GeckoProfiles.delete(context, second)
+        }
+    }
+
+    @Test
+    fun verificationCannotCreateAMissingProfileOrRegisterAnUnfinishedLogin() {
+        val accountId = id()
+        val folder = File(context.noBackupFilesDir, "gecko-accounts/$accountId")
+        fun assertMissing() {
+            assertThrows(GeckoProfiles.MissingProfileException::class.java) {
+                GeckoProfiles.acquire(context, accountId, requireExisting = true).close()
+            }
+        }
+        try {
+            assertMissing()
+            assertFalse(folder.exists())
+            val profile = GeckoProfiles.acquire(context, accountId).use { it.profile }
+            assertTrue(GeckoProfiles.markImportPending(context, accountId))
+            assertMissing()
+            assertTrue(GeckoProfiles.isImportPending(context, accountId))
+            assertFalse(GeckoProfiles.isImported(context, accountId))
+            assertTrue(GeckoProfiles.confirmImport(context, accountId))
+            assertTrue(profile.delete())
+            assertMissing()
+            assertFalse(profile.exists())
+            assertTrue(GeckoProfiles.isImported(context, accountId))
+        } finally { GeckoProfiles.delete(context, accountId) }
+    }
+
+    @Test
     fun repeatedConfirmationAndSnapshotsDoNotRewriteTheRegisteredMarker() {
         val accountId = id()
         try {

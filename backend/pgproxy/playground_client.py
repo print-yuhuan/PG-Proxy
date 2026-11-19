@@ -20,6 +20,37 @@ from .playground_protocol import (loads, parse_models, encode_generate, iter_fra
                                   encode_logging_context, restore_function_names, CONTINUATION_ROUND_TOKENS)
 
 
+_GOOGLE_ACCOUNT_VERIFICATION_MESSAGE = re.compile(
+    r'Your account must be verified before it can continue using the Gemini API\. '
+    r'Verify your account at https://aistudio\.google\.com/verify-account'
+    r'(?:\.(?: Learn more at https://ai\.google\.dev/gemini-api/docs/verification'
+    r'(?:#[A-Za-z0-9][A-Za-z0-9_-]*)?\.?)?)?'
+)
+
+
+def _is_google_account_verification_message(message):
+    return isinstance(message, str) and _GOOGLE_ACCOUNT_VERIFICATION_MESSAGE.fullmatch(message) is not None
+
+
+def _requires_google_account_verification(raw):
+    try:
+        payload = loads(raw)
+    except (PlaygroundError, RecursionError):
+        return False
+    if isinstance(payload, list) and len(payload) == 2 and payload[0] is None:
+        error = payload[1]
+        return (isinstance(error, list) and len(error) >= 2 and type(error[0]) is int
+                and error[0] == 7 and _is_google_account_verification_message(error[1]))
+    error = payload.get('error') if isinstance(payload, dict) else None
+    if not isinstance(error, dict) or not _is_google_account_verification_message(error.get('message')):
+        return False
+    if error.get('status', 'PERMISSION_DENIED') != 'PERMISSION_DENIED':
+        return False
+    if 'code' in error:
+        return type(error['code']) is int and error['code'] == 403
+    return 'status' in error
+
+
 def parse_page_toggles(text):
     """Page globals use JavaScript integer literals, not JSON (hex and trailing comma)."""
     try:
@@ -216,10 +247,13 @@ class PlaygroundClient:
             error = PlaygroundError(message,public_status,code)
             error.diagnostic_raw = raw or message
             error.diagnostic_status = status
+            error.diagnostic_upstream_operation = method
             error.diagnostic_upstream_code = upstream_code
             return error
         if status==403:
             self.waa_at=0
+            if method == 'GenerateContent' and _requires_google_account_verification(raw):
+                raise failed('Google requires account verification',403,'google_account_verification_required')
             raise failed('Google refused the request',403,'upstream_permission_denied')
         if status in (401,403) or 300 <= status <400:
             self.api_key = ''; self.waa_at = 0

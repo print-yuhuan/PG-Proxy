@@ -87,6 +87,7 @@ class UIInstrumentedTest {
     private var serviceToggles = 0
     private var repositoryOpens = 0
     private var issuesOpens = 0
+    private val verificationOpens = mutableListOf<String>()
     private val groupOpens = mutableListOf<String>()
     private val systemSettingsOpens = mutableListOf<String>()
 
@@ -99,6 +100,7 @@ class UIInstrumentedTest {
             state = state.copy(accounts = state.accounts.map { if (it.id == id) it.copy(enabled = value) else it })
         },
         onCheckAccount = { checked += it },
+        onOpenGoogleVerification = { verificationOpens += it },
         onDeleteAccount = { id ->
             deleted += id
             state = state.copy(accounts = state.accounts.filterNot { it.id == id })
@@ -287,6 +289,38 @@ class UIInstrumentedTest {
             assertEquals(listOf(ACCOUNT_ID), checked)
             assertEquals(listOf(ACCOUNT_ID to "合成账号 A"), relogins)
         }
+    }
+
+    @Test fun onlyGoogleAccountVerificationErrorOffersVerificationPage() {
+        val initial = sampleState().copy(pendingLogins = emptyList())
+        val account = initial.accounts.single().copy(status = "validation_error", lastError = "upstream_permission_denied")
+        show(initial.copy(accounts = listOf(account)), Presentation(320, 1.6f))
+        navigate("accounts")
+        val genericHint = "当前凭证暂时无法访问，请检查 AI Studio 使用权限。"
+        compose.onNodeWithTag("page_accounts").performScrollToNode(hasText(genericHint))
+        compose.onNodeWithText(genericHint).assertIsDisplayed()
+        compose.onNodeWithTag("account_verify_$ACCOUNT_ID").assertDoesNotExist()
+
+        val otherAccount = account.copy(id = "verification-target", label = "合成账号 B", lastError = "google_account_verification_required")
+        compose.runOnIdle {
+            state = state.copy(accounts = listOf(account, otherAccount))
+        }
+        val button = "account_verify_${otherAccount.id}"
+        val verificationHint = "需要完成 Google 账号验证"
+        compose.onNodeWithTag("page_accounts").performScrollToNode(hasText(verificationHint))
+        compose.onNodeWithText(verificationHint).assertIsDisplayed()
+        for (action in listOf("account_check_${otherAccount.id}", "account_relogin_${otherAccount.id}", "account_delete_${otherAccount.id}", button)) {
+            assertActionAboveNavigation(action, "accounts")
+            val bounds = compose.onNodeWithTag(action).getUnclippedBoundsInRoot()
+            assertTrue("$action must provide a 48 dp touch target",
+                bounds.right - bounds.left >= 48.dp && bounds.bottom - bounds.top >= 48.dp)
+        }
+        visible(button, "accounts").assertTextEquals("前往验证").assertIsEnabled().performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(otherAccount.id), verificationOpens)
+            state = state.copy(busy = true)
+        }
+        visible(button, "accounts").assertIsNotEnabled()
     }
 
     @Test fun settingsRejectInvalidInputAndSubmitOneValidatedConfiguration() {
