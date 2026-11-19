@@ -300,6 +300,10 @@ class UIInstrumentedTest {
         compose.onNodeWithTag("page_accounts").performScrollToNode(hasText(genericHint))
         compose.onNodeWithText(genericHint).assertIsDisplayed()
         compose.onNodeWithTag("account_verify_$ACCOUNT_ID").assertDoesNotExist()
+        val guide = "1. 点「前往验证」完成 Google 验证。已通过可跳过此步。\n" +
+            "2. 返回这份凭证，点「重新登录」刷新凭证。\n" +
+            "3. 导入完成后，点「检查凭证」确认可用。"
+        compose.onNodeWithText(guide).assertDoesNotExist()
 
         val otherAccount = account.copy(id = "verification-target", label = "合成账号 B", lastError = "google_account_verification_required")
         compose.runOnIdle {
@@ -309,6 +313,8 @@ class UIInstrumentedTest {
         val verificationHint = "需要完成 Google 账号验证"
         compose.onNodeWithTag("page_accounts").performScrollToNode(hasText(verificationHint))
         compose.onNodeWithText(verificationHint).assertIsDisplayed()
+        compose.onNodeWithTag("page_accounts").performScrollToNode(hasText(guide))
+        compose.onNodeWithText(guide).assertIsDisplayed()
         for (action in listOf("account_check_${otherAccount.id}", "account_relogin_${otherAccount.id}", "account_delete_${otherAccount.id}", button)) {
             assertActionAboveNavigation(action, "accounts")
             val bounds = compose.onNodeWithTag(action).getUnclippedBoundsInRoot()
@@ -318,9 +324,28 @@ class UIInstrumentedTest {
         visible(button, "accounts").assertTextEquals("前往验证").assertIsEnabled().performClick()
         compose.runOnIdle {
             assertEquals(listOf(otherAccount.id), verificationOpens)
+            assertTrue(relogins.isEmpty() && checked.isEmpty())
             state = state.copy(busy = true)
         }
         visible(button, "accounts").assertIsNotEnabled()
+        compose.runOnIdle { state = state.copy(busy = false) }
+        visible("account_relogin_${otherAccount.id}", "accounts").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(otherAccount.id to otherAccount.label), relogins)
+            assertTrue(checked.isEmpty())
+            state = state.copy(accounts = listOf(otherAccount.copy(status = "unchecked", lastError = "")))
+        }
+        compose.onNodeWithTag("page_accounts").performScrollToNode(hasText("等待检查"))
+        compose.onNodeWithText("等待检查").assertIsDisplayed()
+        compose.onNodeWithText(guide).assertDoesNotExist()
+        visible("account_check_${otherAccount.id}", "accounts").performClick()
+        compose.runOnIdle {
+            assertEquals(listOf(otherAccount.id), checked)
+            state = state.copy(accounts = listOf(otherAccount.copy(status = "verified", lastError = "")))
+        }
+        compose.onNodeWithTag("page_accounts").performScrollToNode(hasText("已验证"))
+        compose.onNodeWithText("已验证").assertIsDisplayed()
+        compose.onNodeWithTag(button).assertDoesNotExist()
     }
 
     @Test fun settingsRejectInvalidInputAndSubmitOneValidatedConfiguration() {

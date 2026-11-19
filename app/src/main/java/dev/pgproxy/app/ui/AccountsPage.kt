@@ -290,6 +290,13 @@ private fun AccountCard(account: AccountUi, available: Boolean, actions: UiActio
                             if (isCurrent()) actions.onOpenGoogleVerification(account.id)
                         }
                     }
+                    Text(
+                        "1. 点「前往验证」完成 Google 验证。已通过可跳过此步。\n" +
+                            "2. 返回这份凭证，点「重新登录」刷新凭证。\n" +
+                            "3. 导入完成后，点「检查凭证」确认可用。",
+                        modifier = Modifier.fillMaxWidth(), style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
                 }
             }
         }
