@@ -1,5 +1,16 @@
 # 验证总览与复现
 
+## 0.5.2 凭证检查模型
+
+2026-11-20，在 Pixel 10 模拟器（Android 17 / API 37 / x86_64）上从 0.5.1 Debug 覆盖升级到 0.5.2 Debug（版本码 52）。升级保留了应用内已登录的凭证。
+
+- 本地全量 `python -m pytest -q` 通过 1016 项。新增用例覆盖其他 Flash 模型排在目标模型前、目录缺少目标模型，以及旧调用传入其他模型的情况。Go 的 `go test -count=1 -mod=vendor ./...` 和 `go vet -mod=vendor ./...` 均通过。
+- ARM64、x86_64 两个 Debug 变体各通过 16 项 JVM 测试。
+- 模拟器上 15 个测试类的 79 项常规 Android 回归全部通过，覆盖凭证卡片、验证入口、配置和凭证保留、服务生命周期及日志。
+- `BrowserImportedAccountInstrumentedTest` 用一份已有浏览器凭证完成两次真实短文本生成。普通检查和强制刷新 WAA 后的检查均返回 `gemini-3.8-flash`。第二次检查确实取得了新的挑战程序，测试结束后恢复了原有凭证启用状态。
+
+上述模拟器主包 SHA-256 为 `984bc3e277523ed420e8abc5d75ac6f0633dd15f8be71fb085aa07cd59a0d867`，测试包为 `a81714e8b6a55f23e6aa6c2794daf554c6abbc7eec7ef10232ef84a93918ec75`。本轮仅使用一份真实账号，ARM64 正式包尚未在真机上运行。该正式包的源码提交、签名和文件哈希见 [0.5.2 Release](https://github.com/print-yuhuan/PG-Proxy/releases/tag/v0.5.2)。
+
 ## 0.5.1 发布前 ARM64 真机反馈
 
 2026-11-19，用户在真机上完成 Google 账号验证后，返回 PG Proxy，在原凭证卡片点「重新登录」刷新凭证，随后通过了「检查凭证」。该检查会使用刷新后的会话发送一次真实生成请求。

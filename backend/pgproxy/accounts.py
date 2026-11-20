@@ -263,7 +263,7 @@ class AccountPool:
                         await client.waa.close()
                         client.waa_at = 0
 
-    async def check(self, account_id, model=None, force_refresh=False):
+    async def check(self, account_id, *, force_refresh=False):
         self.require_live_id(account_id)
         record = self.record(account_id)
         async with self.queued():
@@ -275,15 +275,14 @@ class AccountPool:
             client = self.client(record)
             try:
                 catalog = await self._catalog(record)
+                model = 'gemini-3.8-flash'
+                if model not in catalog:
+                    raise PlaygroundError(f'Credential check model {model} is unavailable for this account',
+                                          404,'model_not_found',
+                                          public_message=f'当前账号的模型目录中没有 {model}，无法完成凭证检查。')
                 previous_program = (getattr(client,'challenge',None) or {}).get('program')
                 if force_refresh:
                     client.waa_at = 0
-                if model is None:
-                    choices = [m for m,entry in catalog.items() if 21 not in entry.get('_codes',[])
-                               and not any(x in m.lower() for x in ('image','audio','tts','transcribe'))]
-                    model = next((m for m in choices if 'flash' in m),next(iter(choices),None))
-                if not model or model not in catalog:
-                    raise PlaygroundError('Select a model supported by this account',404,'model_not_found')
                 await self._release_other_workers(account_id)
                 self.active = account_id
                 entry = catalog[model]

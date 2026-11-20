@@ -47,15 +47,15 @@ class LiveAccountInstrumentedTest {
                     // Remove the plaintext staging file immediately after the encrypted import.
                     check(source.delete()) { "Could not remove private staging file" }
                     step = "real_waa_and_model_generation"
-                    val check = client.result("check_account", JSONObject().put("id", accountId).apply {
-                        args.getString("liveModel")?.let { put("model", it) }
-                    }, 360).getJSONObject("check")
+                    val check = client.result("check_account", JSONObject().put("id", accountId), 360).getJSONObject("check")
                     assertTrue("Real generation did not verify the account", check.getBoolean("verified"))
+                    assertEquals("gemini-3.8-flash", check.getString("model"))
                     report.put("check", check).put("realGeneration", true).put("waaServerAcceptance", true)
                     step = "real_waa_refresh_and_generation"
                     val refreshed = client.result("check_account", JSONObject().put("id", accountId)
-                        .put("model", check.getString("model")).put("forceRefresh", true), 360).getJSONObject("check")
+                        .put("forceRefresh", true), 360).getJSONObject("check")
                     assertTrue("Generation following WAA refresh did not verify", refreshed.getBoolean("verified"))
+                    assertEquals("gemini-3.8-flash", refreshed.getString("model"))
                     report.put("refreshCheck", refreshed).put("forcedRefreshGeneration", true)
                     step = "http_start"
                     val started = client.result("start")

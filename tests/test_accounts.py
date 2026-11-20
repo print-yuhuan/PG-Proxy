@@ -39,7 +39,7 @@ class FakeClient:
         self.generation_verified = False
         self.waa_at = 0
         self.waa = SimpleNamespace(process=None,close=self.close_worker)
-        self.catalog = {'test-chat':{'name':'test-chat'}}
+        self.catalog = {name:{'name':name} for name in ('test-chat','gemini-3.8-flash')}
         self.catalog_read = False
         self.failure = None
         self.calls = []
@@ -90,7 +90,7 @@ async def test_round_robin_isolated_credentials_and_model_eligibility():
         assert frames[0]['candidates'][0]['content']['parts'][0]['text'] == expected
     pool.client(pool.record(a)).catalog = {'other':{}}
     assert (await consume(pool))[0]['candidates'][0]['content']['parts'][0]['text'] == b
-    assert set(await pool.models()) == {'other','test-chat'}
+    assert set(await pool.models()) == {'other','test-chat','gemini-3.8-flash'}
     await pool.close()
 
 
@@ -317,7 +317,28 @@ async def test_403_is_validation_error_not_cookie_expiry_and_probe_recovers(code
     result = await pool.check(account_id)
     assert result['verified'] and pool.record(account_id)['status']=='verified'
     assert pool.record(account_id)['lastError'] is None
-    assert client.calls == ['test-chat','test-chat']
+    assert client.calls == ['test-chat','gemini-3.8-flash']
+    await pool.close()
+
+
+@pytest.mark.asyncio
+async def test_credential_check_uses_only_gemini_38_flash_across_catalog_changes():
+    pool,_ = pool_fixture()
+    account_id = await add(pool)
+    record = pool.record(account_id)
+    client = pool.client(record)
+    for models in (('other-flash','gemini-3.8-flash'), ('gemini-3.8-flash','other-flash')):
+        client.catalog = {name:{'name':name} for name in models}
+        result = await pool.check(account_id)
+        assert result['verified'] and result['model'] == record['lastModel'] == 'gemini-3.8-flash'
+    assert client.calls == ['gemini-3.8-flash','gemini-3.8-flash']
+    client.catalog.pop('gemini-3.8-flash')
+    client.calls.clear()
+    with pytest.raises(PlaygroundError) as missing:
+        await pool.check(account_id)
+    assert (missing.value.status,missing.value.code) == (404,'model_not_found')
+    assert 'gemini-3.8-flash' in missing.value.public_message
+    assert not client.calls and record['modelCount'] == 1 and record['status'] != 'verified'
     await pool.close()
 
 

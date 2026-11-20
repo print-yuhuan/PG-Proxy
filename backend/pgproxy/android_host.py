@@ -148,7 +148,7 @@ class Controller:
                     force_refresh = action=='refresh_waa' or payload.get('forceRefresh',False)
                     if type(force_refresh) is not bool:
                         raise ValueError()
-                    extra['check'] = await self.pool.check(payload['id'],payload.get('model'),force_refresh)
+                    extra['check'] = await self.pool.check(payload['id'],force_refresh=force_refresh)
                     self._log('account_generation_verified')
                 else:
                     raise PlaygroundError('Unknown internal operation',400,'invalid_request')

@@ -81,7 +81,7 @@ async def test_manual_credential_check_records_upstream_refusal_without_raw_resp
         assert result['error']['code'] == code
         assert result['result']['accounts'][0]['status'] == 'validation_error'
         assert result['result']['accounts'][0]['lastError'] == code
-        assert result['result']['accounts'][0]['modelCount'] == 1
+        assert result['result']['accounts'][0]['modelCount'] == 2
         log = result['result']['logs'][-1]
         assert log['level'] == 'failure' and log['title'] == '凭证检查未通过' and log['credentialIssue']
         detail = call(controller, 'log_detail', id=log['id'])['result']
@@ -92,7 +92,21 @@ async def test_manual_credential_check_records_upstream_refusal_without_raw_resp
         fake.failure = None
         recovered = call(controller, 'check_account', id=account_id)
         assert recovered['result']['accounts'][0]['status'] == 'verified'
-        assert fake.calls == ['test-chat', 'test-chat']
+        assert fake.calls == ['gemini-3.8-flash', 'gemini-3.8-flash']
+    finally:
+        controller.close()
+
+
+@pytest.mark.parametrize('action', ['check_account', 'refresh_waa'])
+def test_legacy_model_override_cannot_change_credential_check_model(action):
+    controller = Controller(MemoryBridge(), FakeClient)
+    try:
+        account_id = call(controller, 'import_account', session=credentials())['result']['accountId']
+        fake = controller.pool.client(controller.pool.record(account_id))
+        result = call(controller, action, id=account_id, model='test-chat')['result']['check']
+        assert result['verified'] and result['model'] == 'gemini-3.8-flash'
+        assert result['forceRefreshRequested'] == (action == 'refresh_waa')
+        assert fake.calls == ['gemini-3.8-flash']
     finally:
         controller.close()
 

@@ -55,16 +55,16 @@ class BrowserImportedAccountInstrumentedTest {
                         if (enabled != wanted) client.result("set_enabled", JSONObject().put("id", id).put("enabled", wanted))
                     }
                     step = "real_generation_from_browser_import"
-                    val checked = client.result("check_account", JSONObject().put("id", accountId).apply {
-                        args.getString("liveModel")?.let { put("model", it) }
-                    }, 360).getJSONObject("check")
+                    val checked = client.result("check_account", JSONObject().put("id", accountId), 360).getJSONObject("check")
                     assertTrue("Real generation did not verify the browser-imported account", checked.getBoolean("verified"))
                     val model = checked.getString("model")
+                    assertEquals("gemini-3.8-flash", model)
                     report.put("check", safeCheck(checked)).put("realGeneration", true).put("waaServerAcceptance", true)
                     step = "forced_waa_refresh_and_real_generation"
                     val refreshed = client.result("check_account", JSONObject().put("id", accountId)
-                        .put("model", model).put("forceRefresh", true), 360).getJSONObject("check")
+                        .put("forceRefresh", true), 360).getJSONObject("check")
                     assertTrue("Real generation after forced WAA refresh did not verify", refreshed.getBoolean("verified"))
+                    assertEquals("gemini-3.8-flash", refreshed.getString("model"))
                     assertTrue("The server did not supply a changed WAA program after forced refresh", refreshed.optBoolean("waaRefreshed"))
                     report.put("refreshCheck", safeCheck(refreshed)).put("forcedRefreshGeneration", true)
                     step = "http_start_and_private_handoff"
